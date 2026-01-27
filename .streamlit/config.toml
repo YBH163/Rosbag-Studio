@@ -1,0 +1,3 @@
+[server]
+# 设置上传上限为 2000MB (即 2GB)，你可以根据需要改得更大
+maxUploadSize = 1000
