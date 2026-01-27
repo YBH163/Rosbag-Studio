@@ -5,24 +5,22 @@ from pathlib import Path
 import tempfile
 import shutil
 import os
-# --- 新增引用 ---
 from rosbags.typesys import Stores, get_typestore
+from datetime import datetime
 
 # 1. 页面基础设置
 st.set_page_config(
-    page_title="ROS Bag 交互式分析工具",
+    page_title="ROS Bag 分析工具",
     page_icon="🤖",
     layout="wide"
 )
 
 st.title("📂 ROS Bag 交互式分析器")
-st.markdown("""
-支持格式：ROS1 (.bag), ROS2 (.mcap), ROS2 (.db3 + .yaml)
-""")
+st.markdown("支持格式：ROS1 (.bag), ROS2 (.mcap), ROS2 (.db3 + .yaml)")
 
 # 2. 文件上传
 uploaded_files = st.file_uploader(
-    "请拖拽文件 (多选 db3 和 yaml)", 
+    "请拖拽文件 (如果是 .db3，请同时选中 .yaml)", 
     type=["bag", "mcap", "db3", "yaml"],
     accept_multiple_files=True 
 )
@@ -56,26 +54,31 @@ if uploaded_files:
                 st.error("❌ 文件不完整！ROS2 .db3 必须包含 metadata.yaml")
                 st.stop()
 
-            # --- 核心修复点 ---
             # 加载标准 ROS2 Humble 消息定义
             typestore = get_typestore(Stores.ROS2_HUMBLE)
 
-            # 传入 typestore
             with AnyReader([bag_path], default_typestore=typestore) as reader:
                 
-                # 数据读取逻辑
+                # --- 数据计算 ---
                 duration = reader.duration
                 duration_sec = duration * 1e-9 if duration else 0
-                start_time_sec = reader.start_time * 1e-9 if reader.start_time else 0
                 msg_count = reader.message_count
+                topic_count = len(reader.topics)
                 
-                st.success(f"✅ 成功解析: {bag_path.name}")
+                # --- 时间格式化 ---
+                start_time_str = "-"
+                if reader.start_time:
+                    dt_object = datetime.fromtimestamp(reader.start_time * 1e-9)
+                    start_time_str = dt_object.strftime('%Y-%m-%d %H:%M:%S')
+
+                # --- 界面显示 ---
+                st.success("✅ 文件解析成功")
                 
                 col1, col2, col3, col4 = st.columns(4)
                 col1.metric("总时长", f"{duration_sec:.2f} s")
                 col2.metric("消息总数", f"{msg_count}")
-                col3.metric("开始时间", f"{start_time_sec:.2f}")
-                col4.metric("格式", reader.connections[0].digest if reader.connections else "Unknown")
+                col3.metric("Topic 数量", f"{topic_count}")
+                col4.metric("开始时间", start_time_str)
 
                 st.divider()
 
@@ -91,14 +94,25 @@ if uploaded_files:
                     })
                 
                 df = pd.DataFrame(topic_data)
+                
                 if not df.empty:
+                    # 1. 先按消息数量降序排序
                     df = df.sort_values(by="消息数量", ascending=False)
+                    # 2. 重置索引（丢弃旧的乱序索引）
+                    df = df.reset_index(drop=True)
+                    # 3. 插入一列“序号”，让它从 1 开始
+                    df.insert(0, "序号", df.index + 1)
 
                 st.dataframe(
                     df, 
                     use_container_width=True,
-                    hide_index=True,
+                    hide_index=True, # 隐藏 pandas 自带的 index，只显示我们插入的“序号”
                     column_config={
+                        "序号": st.column_config.NumberColumn(
+                            "No.", 
+                            format="%d", 
+                            width="small"
+                        ),
                         "消息数量": st.column_config.ProgressColumn(
                             "消息占比",
                             format="%d",
