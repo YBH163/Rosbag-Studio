@@ -450,33 +450,49 @@ if uploaded_files:
                     export_name = f"cropped_data"
                     output_file_path = None
                     mime_type = "application/octet-stream"
+                    
+                    # 定义一个集合，用来记录哪些 topic 因为缺少定义而被跳过
+                    skipped_conn_ids = set()
 
                     with st.status("正在处理...", expanded=True) as status:
                         try:
                             # ==================================================
-                            # 1. ROS2 .db3 导出
-                            # 修复点: version=9 (Int), 全程使用关键字参数
+                            # 1. ROS2 .db3 导出 (带跳过逻辑)
                             # ==================================================
                             if selected_fmt == "db3":
                                 status.write("初始化 ROS2 SQLite Writer...")
                                 out_dir = temp_dir_path / "output_db3"
                                 if out_dir.exists(): shutil.rmtree(out_dir)
-                                # 不要手动 mkdir，Writer 会自己做
                                 
-                                # FIX: version 必须是整数 (9 代表 Humble/Rolling)
+                                # 确保使用 Db3Writer
+                                if Db3Writer is None:
+                                    raise ImportError("无法导入 Db3Writer，请检查 rosbags 安装")
+
                                 with Db3Writer(out_dir, version=9) as writer:
                                     conn_map = {}
-                                    for c in reader.connections:
-                                        # FIX: 强制使用关键字参数，防止参数位置不对
-                                        conn_map[c.id] = writer.add_connection(
-                                            topic=c.topic, 
-                                            msgtype=c.msgtype, 
-                                            typestore=reader.typestore, 
-                                            digest=c.digest
-                                        )
                                     
+                                    # --- 第一步：注册 Connection (带异常捕获) ---
+                                    for c in reader.connections:
+                                        try:
+                                            conn_map[c.id] = writer.add_connection(
+                                                topic=c.topic, 
+                                                msgtype=c.msgtype, 
+                                                typestore=reader.typestore, 
+                                                digest=c.digest
+                                            )
+                                        except Exception as e:
+                                            # 如果报错 (Unknown Type)，则记录下来跳过，不让程序崩掉
+                                            print(f"Skipping {c.topic}: {e}")
+                                            skipped_conn_ids.add(c.id)
+                                            st.warning(f"⚠️ 跳过 Topic: `{c.topic}` (原因: 缺少类型定义 {c.msgtype})")
+
+                                    # --- 第二步：写入消息 ---
                                     status.write("正在写入消息...")
                                     for conn, ts, raw in reader.messages():
+                                        # 如果这个 connection 被标记为跳过，则不写入
+                                        if conn.id in skipped_conn_ids:
+                                            continue
+                                            
                                         if final_start <= ts <= final_end:
                                             writer.write_message(conn_map[conn.id], ts, raw)
                                 
@@ -487,29 +503,38 @@ if uploaded_files:
                                 export_name += ".zip"
 
                             # ==================================================
-                            # 2. ROS1 .bag 导出
-                            # 修复点: 填充空的 md5sum，全程关键字参数
+                            # 2. ROS1 .bag 导出 (最稳健)
                             # ==================================================
                             elif selected_fmt == "bag":
                                 status.write("初始化 ROS1 Writer...")
                                 out_path = temp_dir_path / (export_name + ".bag")
                                 
+                                if BagWriter is None:
+                                    raise ImportError("无法导入 BagWriter")
+
                                 with BagWriter(out_path) as writer:
                                     conn_map = {}
                                     for c in reader.connections:
-                                        # FIX: ROS1 必须有 md5sum。如果读取不到，给一个假的防止报错
-                                        # 这是一个 Hack，但能保证文件写出来（虽然 ros1 可能报警告）
-                                        safe_digest = c.digest if c.digest else "0" * 32
-                                        
-                                        conn_map[c.id] = writer.add_connection(
-                                            topic=c.topic,
-                                            msgtype=c.msgtype,
-                                            msgdef=c.msgdef, # ROS1 需要 msgdef
-                                            md5sum=safe_digest
-                                        )
-                                    
+                                        try:
+                                            msg_def_str = c.msgdef
+                                            if not isinstance(msg_def_str, str):
+                                                msg_def_str = getattr(msg_def_str, 'definition', str(msg_def_str))
+                                            
+                                            safe_digest = c.digest if c.digest else "0" * 32
+                                            
+                                            conn_map[c.id] = writer.add_connection(
+                                                topic=c.topic,
+                                                msgtype=c.msgtype,
+                                                msgdef=msg_def_str, 
+                                                md5sum=safe_digest
+                                            )
+                                        except Exception as e:
+                                            skipped_conn_ids.add(c.id)
+                                            st.warning(f"⚠️ 跳过 Topic: `{c.topic}` (ROS1 转换失败)")
+
                                     status.write("正在写入消息...")
                                     for conn, ts, raw in reader.messages():
+                                        if conn.id in skipped_conn_ids: continue
                                         if final_start <= ts <= final_end:
                                             writer.write_message(conn_map[conn.id], ts, raw)
                                 
@@ -517,27 +542,35 @@ if uploaded_files:
                                 export_name += ".bag"
                             
                             # ==================================================
-                            # 3. MCAP 导出
-                            # 修复点: 增加 version=9, 全程关键字参数
+                            # 3. MCAP 导出 (带跳过逻辑)
                             # ==================================================
                             elif selected_fmt == "mcap":
+                                # 检查是否真的有 McapWriter
+                                if McapWriter is None:
+                                    st.error("❌ 你的环境缺少 rosbags[mcap] 支持，无法导出 MCAP。请使用 .bag 或 .db3。")
+                                    # 可以在这里抛出异常停止，或者直接 return
+                                    raise ImportError("McapWriter module not found")
+
                                 status.write("初始化 MCAP Writer...")
                                 out_path = temp_dir_path / (export_name + ".mcap")
                                 
-                                # FIX: MCAP 也需要 version=9 (Int)
                                 with McapWriter(out_path, version=9) as writer:
                                     conn_map = {}
                                     for c in reader.connections:
-                                        # FIX: 关键字参数
-                                        conn_map[c.id] = writer.add_connection(
-                                            topic=c.topic, 
-                                            msgtype=c.msgtype, 
-                                            typestore=reader.typestore, 
-                                            digest=c.digest
-                                        )
-                                    
+                                        try:
+                                            # 注意：MCAP 不接受 digest 参数
+                                            conn_map[c.id] = writer.add_connection(
+                                                topic=c.topic, 
+                                                msgtype=c.msgtype, 
+                                                typestore=reader.typestore
+                                            )
+                                        except Exception as e:
+                                            skipped_conn_ids.add(c.id)
+                                            st.warning(f"⚠️ 跳过 Topic: `{c.topic}` (原因: 缺少类型定义)")
+
                                     status.write("正在写入消息...")
                                     for conn, ts, raw in reader.messages():
+                                        if conn.id in skipped_conn_ids: continue
                                         if final_start <= ts <= final_end:
                                             writer.write_message(conn_map[conn.id], ts, raw)
                                 
@@ -572,7 +605,6 @@ if uploaded_files:
                                 file_name=ef['name'],
                                 mime=ef['mime']
                             )
-
     except Exception as e:
         st.error(f"运行出错: {e}")
         import traceback
