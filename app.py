@@ -163,448 +163,452 @@ if uploaded_files:
 
         # 读取
         typestore = get_typestore(Stores.ROS2_HUMBLE)
-        with AnyReader([bag_path], default_typestore=typestore) as reader:
-            
-            # 基础数据
-            duration_ns = (reader.duration or 0)
-            duration_sec = duration_ns * 1e-9
-            start_time_ns = reader.start_time or 0
-            end_time_ns = reader.end_time or 0
-            msg_count = reader.message_count
-            start_time_str = datetime.fromtimestamp(start_time_ns * 1e-9).strftime('%Y-%m-%d %H:%M:%S') if start_time_ns else "-"
-            
-            # Topic 列表
-            topics = [{"Topic": t, "Type": i.msgtype, "Count": i.msgcount} for t, i in reader.topics.items()]
-            df_topics = pd.DataFrame(topics).sort_values("Count", ascending=False).reset_index(drop=True)
-            df_topics.insert(0, "No.", df_topics.index + 1)
-
-            # --- Day 1: 概览 ---
-            with st.expander("📊 文件概览", expanded=True):
-                c1, c2, c3 = st.columns(3)
-                c1.metric("时长", f"{duration_sec:.2f}s")
-                c2.metric("消息数", msg_count)
-                c3.metric("Topic数", len(topics))
-                st.dataframe(df_topics, use_container_width=True, hide_index=True)
-
-            # --- Day 2: 可视化 ---
-            st.divider()
-            st.header("🎨 2. 深度可视化工作台")
-            
-            col_sel1, col_sel2 = st.columns([1, 1])
-            with col_sel1:
-                selected_topic = st.selectbox("请选择要分析的 Topic:", df_topics["Topic"].tolist())
-            
-            if selected_topic:
-                connections = [x for x in reader.connections if x.topic == selected_topic]
-                msg_type = connections[0].msgtype
-                total_msgs = reader.topics[selected_topic].msgcount
+        try:
+            with AnyReader([bag_path], default_typestore=typestore) as reader:
                 
-                with col_sel2:
-                    st.info(f"📌 类型: **{msg_type}**\n\n📦 数量: **{total_msgs}** 帧")
-
-                limit = 2000
+                # 基础数据
+                duration_ns = (reader.duration or 0)
+                duration_sec = duration_ns * 1e-9
+                start_time_ns = reader.start_time or 0
+                end_time_ns = reader.end_time or 0
+                msg_count = reader.message_count
+                start_time_str = datetime.fromtimestamp(start_time_ns * 1e-9).strftime('%Y-%m-%d %H:%M:%S') if start_time_ns else "-"
                 
-                # --- A: 图像 ---
-                if "Image" in msg_type:
-                    st.subheader("🖼️ 图像播放器")
-                    msgs = []
-                    with st.spinner(f"正在加载图像流 (前 {limit} 帧)..."):
+                # Topic 列表
+                topics = [{"Topic": t, "Type": i.msgtype, "Count": i.msgcount} for t, i in reader.topics.items()]
+                df_topics = pd.DataFrame(topics).sort_values("Count", ascending=False).reset_index(drop=True)
+                df_topics.insert(0, "No.", df_topics.index + 1)
+
+                # --- Day 1: 概览 ---
+                with st.expander("📊 文件概览", expanded=True):
+                    c1, c2, c3 = st.columns(3)
+                    c1.metric("时长", f"{duration_sec:.2f}s")
+                    c2.metric("消息数", msg_count)
+                    c3.metric("Topic数", len(topics))
+                    st.dataframe(df_topics, use_container_width=True, hide_index=True)
+
+                # --- Day 2: 可视化 ---
+                st.divider()
+                st.header("🎨 2. 深度可视化工作台")
+                
+                col_sel1, col_sel2 = st.columns([1, 1])
+                with col_sel1:
+                    selected_topic = st.selectbox("请选择要分析的 Topic:", df_topics["Topic"].tolist())
+                
+                if selected_topic:
+                    connections = [x for x in reader.connections if x.topic == selected_topic]
+                    msg_type = connections[0].msgtype
+                    total_msgs = reader.topics[selected_topic].msgcount
+                    
+                    with col_sel2:
+                        st.info(f"📌 类型: **{msg_type}**\n\n📦 数量: **{total_msgs}** 帧")
+
+                    limit = 2000
+                    
+                    # --- A: 图像 ---
+                    if "Image" in msg_type:
+                        st.subheader("🖼️ 图像播放器")
+                        msgs = []
+                        with st.spinner(f"正在加载图像流 (前 {limit} 帧)..."):
+                            for conn, ts, rawdata in reader.messages(connections=connections):
+                                if len(msgs) >= limit: break
+                                msgs.append((ts, rawdata, conn))
+                        
+                        if msgs:
+                            slider_idx = st.slider("帧索引", 0, len(msgs)-1, 0)
+                            ts, raw, conn = msgs[slider_idx]
+                            msg = reader.deserialize(raw, conn.msgtype)
+                            
+                            img_data = decode_image(msg, msg_type)
+                            if img_data is not None:
+                                st.image(img_data, caption=f"Frame {slider_idx} | Time: {(ts-reader.start_time)*1e-9:.2f}s")
+                            
+                            with st.expander("查看原始消息结构"):
+                                st.json(msg_to_json_compatible(msg))
+                    
+                    # --- B: 点云 (已修复 size 问题) ---
+                    elif "PointCloud2" in msg_type:
+                        st.subheader("☁️ 点云可视化")
+                        msgs = []
                         for conn, ts, rawdata in reader.messages(connections=connections):
                             if len(msgs) >= limit: break
                             msgs.append((ts, rawdata, conn))
-                    
-                    if msgs:
-                        slider_idx = st.slider("帧索引", 0, len(msgs)-1, 0)
-                        ts, raw, conn = msgs[slider_idx]
-                        msg = reader.deserialize(raw, conn.msgtype)
-                        
-                        img_data = decode_image(msg, msg_type)
-                        if img_data is not None:
-                            st.image(img_data, caption=f"Frame {slider_idx} | Time: {(ts-reader.start_time)*1e-9:.2f}s")
-                        
-                        with st.expander("查看原始消息结构"):
-                            st.json(msg_to_json_compatible(msg))
-                
-                # --- B: 点云 (已修复 size 问题) ---
-                elif "PointCloud2" in msg_type:
-                    st.subheader("☁️ 点云可视化")
-                    msgs = []
-                    for conn, ts, rawdata in reader.messages(connections=connections):
-                        if len(msgs) >= limit: break
-                        msgs.append((ts, rawdata, conn))
-                        
-                    if msgs:
-                        slider_idx = st.slider("选择点云帧", 0, len(msgs)-1, 0)
-                        ts, raw, conn = msgs[slider_idx]
-                        msg = reader.deserialize(raw, conn.msgtype)
-                        
-                        xyz = parse_pointcloud2(msg)
-                        
-                        if xyz is not None:
-                            # 采样
-                            if len(xyz) > 5000:
-                                indices = np.random.choice(len(xyz), 5000, replace=False)
-                                xyz_sample = xyz[indices]
-                            else:
-                                xyz_sample = xyz
-                                
-                            fig = px.scatter_3d(
-                                x=xyz_sample[:,0], y=xyz_sample[:,1], z=xyz_sample[:,2],
-                                title=f"Frame {slider_idx} (Subsampled)",
-                                opacity=0.8
-                            )
-                            # --- 修复点：将 size 设置得很小 ---
-                            fig.update_traces(marker=dict(size=1)) 
-                            fig.update_layout(scene=dict(aspectmode='data'))
-                            st.plotly_chart(fig, use_container_width=True)
                             
-                        with st.expander("原始消息"):
-                            st.json(msg_to_json_compatible(msg))
-
-                # --- C: PoseArray ---
-                elif "PoseArray" in msg_type:
-                    st.subheader("📍 PoseArray 3D 可视化")
-                    msgs = []
-                    for conn, ts, rawdata in reader.messages(connections=connections):
-                        if len(msgs) >= limit: break
-                        msgs.append((ts, rawdata, conn))
-
-                    if msgs:
-                        slider_idx = st.slider("选择帧", 0, len(msgs)-1, 0)
-                        ts, raw, conn = msgs[slider_idx]
-                        msg = reader.deserialize(raw, conn.msgtype)
-                        
-                        points = []
-                        for i, pose in enumerate(msg.poses):
-                            points.append({
-                                "x": pose.position.x,
-                                "y": pose.position.y,
-                                "z": pose.position.z,
-                                "id": i
-                            })
-                        
-                        if points:
-                            df_pose = pd.DataFrame(points)
-                            fig = px.scatter_3d(
-                                df_pose, x="x", y="y", z="z", 
-                                color="id", 
-                                title=f"PoseArray Frame {slider_idx}"
-                            )
-                            fig.update_traces(marker=dict(size=3))
-                            fig.update_layout(scene=dict(aspectmode='data'))
-                            st.plotly_chart(fig, use_container_width=True)
+                        if msgs:
+                            slider_idx = st.slider("选择点云帧", 0, len(msgs)-1, 0)
+                            ts, raw, conn = msgs[slider_idx]
+                            msg = reader.deserialize(raw, conn.msgtype)
                             
-                        with st.expander("原始消息"):
-                            st.json(msg_to_json_compatible(msg))
-
-                # --- D: 数值曲线 ---
-                else:
-                    st.subheader("📈 数值趋势分析")
-                    data_list = []
-                    raw_msgs_lookup = []
-                    
-                    with st.spinner("正在提取数值曲线..."):
-                        progress = st.progress(0)
-                        for i, (conn, ts, rawdata) in enumerate(reader.messages(connections=connections)):
-                            if i >= limit: break
-                            msg = reader.deserialize(rawdata, conn.msgtype)
-                            val_dict = extract_numeric_data(msg)
-                            val_dict["Time"] = (ts - reader.start_time) * 1e-9
-                            data_list.append(val_dict)
-                            raw_msgs_lookup.append(msg)
-                            if i % 100 == 0: progress.progress(i / min(total_msgs, limit))
-                        progress.empty()
-                    
-                    df = pd.DataFrame(data_list)
-                    
-                    if not df.empty and len(df.columns) > 1:
-                        y_cols = [c for c in df.columns if c != "Time"]
-                        fig = px.line(df, x="Time", y=y_cols, title=f"{selected_topic} Trend")
-                        st.plotly_chart(fig, use_container_width=True)
-                        
-                        st.divider()
-                        
-                        st.subheader("🔍 单帧详情")
-                        idx = st.slider("选择帧", 0, len(df)-1, 0)
-                        
-                        c1, c2 = st.columns([1, 2])
-                        with c1:
-                            st.markdown("**当前帧数值**")
-                            row_data = df.iloc[idx].to_frame(name="Value")
-                            st.dataframe(row_data, use_container_width=True)
-                        with c2:
-                            st.markdown("**完整消息结构**")
-                            # 安全地调用
-                            st.json(msg_to_json_compatible(raw_msgs_lookup[idx]), expanded=True)
-                    else:
-                        st.warning("未检测到数值字段。")
-                        if raw_msgs_lookup:
-                            st.json(msg_to_json_compatible(raw_msgs_lookup[0]))
-
-            st.divider()
-            st.header("✂️ 3. 裁剪与导出")
-            st.caption("将裁剪后的数据导出为标准的 ROS2 MCAP 格式。")
-
-            crop_tab1, crop_tab2 = st.tabs(["⏱️ 按时间范围裁剪", "🎞️ 按 Topic 帧范围裁剪"])
-            
-            # --- 最终确定的裁剪区间 (纳秒) ---
-            final_start_ns = start_time_ns
-            final_end_ns = end_time_ns
-            
-            # --- 模式 1: 时间轴裁剪 ---
-            with crop_tab1:
-                st.markdown("直接拖动滑块选择保留的时间段。")
-                range_sec = st.slider(
-                    "选择保留的时间范围 (秒)",
-                    min_value=0.0,
-                    max_value=duration_sec,
-                    value=(0.0, duration_sec),
-                    step=0.1
-                )
-                if st.checkbox("确认使用时间范围", key="check_time"):
-                    final_start_ns = start_time_ns + int(range_sec[0] * 1e9)
-                    final_end_ns = start_time_ns + int(range_sec[1] * 1e9)
-                    st.success(f"已选定: {range_sec[0]}s 至 {range_sec[1]}s")
-
-            # --- 模式 2: Topic 帧裁剪 ---
-            with crop_tab2:
-                st.markdown("选择一个参考 Topic，根据其帧数来确定裁剪时间点。")
-                ref_topic = st.selectbox("选择参考 Topic:", df_topics["Topic"].tolist(), key="ref_topic_crop")
-                
-                if ref_topic:
-                    ref_count = reader.topics[ref_topic].msgcount
-                    frame_range = st.slider(
-                        f"选择 {ref_topic} 的保留帧数范围",
-                        min_value=0,
-                        max_value=ref_count,
-                        value=(0, ref_count)
-                    )
-                    
-                    if st.button("计算对应时间戳", key="calc_ts"):
-                        with st.spinner("正在查找对应帧的时间戳..."):
-                            # 我们需要快速扫描一遍这个 Topic 找到对应帧的时间
-                            ref_conns = [x for x in reader.connections if x.topic == ref_topic]
+                            xyz = parse_pointcloud2(msg)
                             
-                            found_start = None
-                            found_end = None
-                            
-                            # 优化：只遍历该 Topic
-                            current_idx = 0
-                            target_start_idx = frame_range[0]
-                            target_end_idx = frame_range[1]
-                            
-                            # 如果 range 是 (0, max)，直接用全局时间
-                            if target_start_idx == 0:
-                                found_start = start_time_ns
-                            
-                            for conn, ts, _ in reader.messages(connections=ref_conns):
-                                if current_idx == target_start_idx and found_start is None:
-                                    found_start = ts
-                                if current_idx == target_end_idx - 1: # end is exclusive/inclusive handling
-                                    found_end = ts
-                                    break # 找到结束点就可以停了
-                                current_idx += 1
-                            
-                            # 边界处理
-                            if found_end is None: found_end = end_time_ns
-                            if found_start is None: found_start = start_time_ns
-                            
-                            # 更新全局变量供导出使用
-                            st.session_state['frame_crop_start'] = found_start
-                            st.session_state['frame_crop_end'] = found_end
-                            
-                            s_sec = (found_start - start_time_ns) * 1e-9
-                            e_sec = (found_end - start_time_ns) * 1e-9
-                            st.info(f"对应时间段: {s_sec:.2f}s - {e_sec:.2f}s")
-                    
-                    if st.checkbox("确认使用帧范围", key="check_frame"):
-                        if 'frame_crop_start' in st.session_state:
-                            final_start_ns = st.session_state['frame_crop_start']
-                            final_end_ns = st.session_state['frame_crop_end']
-                            st.success("已锁定帧对应的时间戳。")
-                        else:
-                            st.warning("请先点击'计算对应时间戳'")
-
-            # st.divider()
-            
-            final_start = final_start_ns * 1e9
-            final_end = final_end_ns * 1e9
-
-            # 2. 导出格式选择
-            st.markdown("#### 导出设置")
-            
-            # 构建可用的格式列表
-            format_options = {}
-            if Db3Writer: format_options["ROS2 SQLite (.db3)"] = "db3"
-            if BagWriter: format_options["ROS1 (.bag)"] = "bag"
-            if McapWriter: format_options["ROS2 MCAP (.mcap)"] = "mcap"
-            else: st.warning("⚠️ 检测到环境缺少 MCAP 支持，已自动隐藏 MCAP 选项。")
-
-            if not format_options:
-                st.error("❌ 严重错误：未检测到任何可用的 Writer 模块，请检查 rosbags 安装。")
-            else:
-                selected_fmt_label = st.radio("选择导出格式", list(format_options.keys()))
-                selected_fmt = format_options[selected_fmt_label]
-
-                if st.button("🚀 开始导出"):
-                    export_name = f"cropped_data"
-                    output_file_path = None
-                    mime_type = "application/octet-stream"
-                    
-                    # 定义一个集合，用来记录哪些 topic 因为缺少定义而被跳过
-                    skipped_conn_ids = set()
-
-                    with st.status("正在处理...", expanded=True) as status:
-                        try:
-                            # ==================================================
-                            # 1. ROS2 .db3 导出 (带跳过逻辑)
-                            # ==================================================
-                            if selected_fmt == "db3":
-                                status.write("初始化 ROS2 SQLite Writer...")
-                                out_dir = temp_dir_path / "output_db3"
-                                if out_dir.exists(): shutil.rmtree(out_dir)
-                                
-                                # 确保使用 Db3Writer
-                                if Db3Writer is None:
-                                    raise ImportError("无法导入 Db3Writer，请检查 rosbags 安装")
-
-                                with Db3Writer(out_dir, version=9) as writer:
-                                    conn_map = {}
+                            if xyz is not None:
+                                # 采样
+                                if len(xyz) > 5000:
+                                    indices = np.random.choice(len(xyz), 5000, replace=False)
+                                    xyz_sample = xyz[indices]
+                                else:
+                                    xyz_sample = xyz
                                     
-                                    # --- 第一步：注册 Connection (带异常捕获) ---
-                                    for c in reader.connections:
-                                        try:
-                                            conn_map[c.id] = writer.add_connection(
-                                                topic=c.topic, 
-                                                msgtype=c.msgtype, 
-                                                typestore=reader.typestore, 
-                                                digest=c.digest
-                                            )
-                                        except Exception as e:
-                                            # 如果报错 (Unknown Type)，则记录下来跳过，不让程序崩掉
-                                            print(f"Skipping {c.topic}: {e}")
-                                            skipped_conn_ids.add(c.id)
-                                            st.warning(f"⚠️ 跳过 Topic: `{c.topic}` (原因: 缺少类型定义 {c.msgtype})")
-
-                                    # --- 第二步：写入消息 ---
-                                    status.write("正在写入消息...")
-                                    for conn, ts, raw in reader.messages():
-                                        # 如果这个 connection 被标记为跳过，则不写入
-                                        if conn.id in skipped_conn_ids:
-                                            continue
-                                            
-                                        if final_start <= ts <= final_end:
-                                            writer.write_message(conn_map[conn.id], ts, raw)
+                                fig = px.scatter_3d(
+                                    x=xyz_sample[:,0], y=xyz_sample[:,1], z=xyz_sample[:,2],
+                                    title=f"Frame {slider_idx} (Subsampled)",
+                                    opacity=0.8
+                                )
+                                # --- 修复点：将 size 设置得很小 ---
+                                fig.update_traces(marker=dict(size=1)) 
+                                fig.update_layout(scene=dict(aspectmode='data'))
+                                st.plotly_chart(fig, use_container_width=True)
                                 
-                                status.write("正在压缩为 ZIP...")
-                                zip_path = shutil.make_archive(temp_dir_path / export_name, 'zip', out_dir)
-                                output_file_path = Path(zip_path)
-                                mime_type = "application/zip"
-                                export_name += ".zip"
+                            with st.expander("原始消息"):
+                                st.json(msg_to_json_compatible(msg))
 
-                            # ==================================================
-                            # 2. ROS1 .bag 导出 (最稳健)
-                            # ==================================================
-                            elif selected_fmt == "bag":
-                                status.write("初始化 ROS1 Writer...")
-                                out_path = temp_dir_path / (export_name + ".bag")
-                                
-                                if BagWriter is None:
-                                    raise ImportError("无法导入 BagWriter")
+                    # --- C: PoseArray ---
+                    elif "PoseArray" in msg_type:
+                        st.subheader("📍 PoseArray 3D 可视化")
+                        msgs = []
+                        for conn, ts, rawdata in reader.messages(connections=connections):
+                            if len(msgs) >= limit: break
+                            msgs.append((ts, rawdata, conn))
 
-                                with BagWriter(out_path) as writer:
-                                    conn_map = {}
-                                    for c in reader.connections:
-                                        try:
-                                            msg_def_str = c.msgdef
-                                            if not isinstance(msg_def_str, str):
-                                                msg_def_str = getattr(msg_def_str, 'definition', str(msg_def_str))
-                                            
-                                            safe_digest = c.digest if c.digest else "0" * 32
-                                            
-                                            conn_map[c.id] = writer.add_connection(
-                                                topic=c.topic,
-                                                msgtype=c.msgtype,
-                                                msgdef=msg_def_str, 
-                                                md5sum=safe_digest
-                                            )
-                                        except Exception as e:
-                                            skipped_conn_ids.add(c.id)
-                                            st.warning(f"⚠️ 跳过 Topic: `{c.topic}` (ROS1 转换失败)")
-
-                                    status.write("正在写入消息...")
-                                    for conn, ts, raw in reader.messages():
-                                        if conn.id in skipped_conn_ids: continue
-                                        if final_start <= ts <= final_end:
-                                            writer.write_message(conn_map[conn.id], ts, raw)
-                                
-                                output_file_path = out_path
-                                export_name += ".bag"
+                        if msgs:
+                            slider_idx = st.slider("选择帧", 0, len(msgs)-1, 0)
+                            ts, raw, conn = msgs[slider_idx]
+                            msg = reader.deserialize(raw, conn.msgtype)
                             
-                            # ==================================================
-                            # 3. MCAP 导出 (带跳过逻辑)
-                            # ==================================================
-                            elif selected_fmt == "mcap":
-                                # 检查是否真的有 McapWriter
-                                if McapWriter is None:
-                                    st.error("❌ 你的环境缺少 rosbags[mcap] 支持，无法导出 MCAP。请使用 .bag 或 .db3。")
-                                    # 可以在这里抛出异常停止，或者直接 return
-                                    raise ImportError("McapWriter module not found")
-
-                                status.write("初始化 MCAP Writer...")
-                                out_path = temp_dir_path / (export_name + ".mcap")
+                            points = []
+                            for i, pose in enumerate(msg.poses):
+                                points.append({
+                                    "x": pose.position.x,
+                                    "y": pose.position.y,
+                                    "z": pose.position.z,
+                                    "id": i
+                                })
+                            
+                            if points:
+                                df_pose = pd.DataFrame(points)
+                                fig = px.scatter_3d(
+                                    df_pose, x="x", y="y", z="z", 
+                                    color="id", 
+                                    title=f"PoseArray Frame {slider_idx}"
+                                )
+                                fig.update_traces(marker=dict(size=3))
+                                fig.update_layout(scene=dict(aspectmode='data'))
+                                st.plotly_chart(fig, use_container_width=True)
                                 
-                                with McapWriter(out_path, version=9) as writer:
-                                    conn_map = {}
-                                    for c in reader.connections:
-                                        try:
-                                            # 注意：MCAP 不接受 digest 参数
-                                            conn_map[c.id] = writer.add_connection(
-                                                topic=c.topic, 
-                                                msgtype=c.msgtype, 
-                                                typestore=reader.typestore
-                                            )
-                                        except Exception as e:
-                                            skipped_conn_ids.add(c.id)
-                                            st.warning(f"⚠️ 跳过 Topic: `{c.topic}` (原因: 缺少类型定义)")
+                            with st.expander("原始消息"):
+                                st.json(msg_to_json_compatible(msg))
 
-                                    status.write("正在写入消息...")
-                                    for conn, ts, raw in reader.messages():
-                                        if conn.id in skipped_conn_ids: continue
-                                        if final_start <= ts <= final_end:
-                                            writer.write_message(conn_map[conn.id], ts, raw)
+                    # --- D: 数值曲线 ---
+                    else:
+                        st.subheader("📈 数值趋势分析")
+                        data_list = []
+                        raw_msgs_lookup = []
+                        
+                        with st.spinner("正在提取数值曲线..."):
+                            progress = st.progress(0)
+                            for i, (conn, ts, rawdata) in enumerate(reader.messages(connections=connections)):
+                                if i >= limit: break
+                                msg = reader.deserialize(rawdata, conn.msgtype)
+                                val_dict = extract_numeric_data(msg)
+                                val_dict["Time"] = (ts - reader.start_time) * 1e-9
+                                data_list.append(val_dict)
+                                raw_msgs_lookup.append(msg)
+                                if i % 100 == 0: progress.progress(i / min(total_msgs, limit))
+                            progress.empty()
+                        
+                        df = pd.DataFrame(data_list)
+                        
+                        if not df.empty and len(df.columns) > 1:
+                            y_cols = [c for c in df.columns if c != "Time"]
+                            fig = px.line(df, x="Time", y=y_cols, title=f"{selected_topic} Trend")
+                            st.plotly_chart(fig, use_container_width=True)
+                            
+                            st.divider()
+                            
+                            st.subheader("🔍 单帧详情")
+                            idx = st.slider("选择帧", 0, len(df)-1, 0)
+                            
+                            c1, c2 = st.columns([1, 2])
+                            with c1:
+                                st.markdown("**当前帧数值**")
+                                row_data = df.iloc[idx].to_frame(name="Value")
+                                st.dataframe(row_data, use_container_width=True)
+                            with c2:
+                                st.markdown("**完整消息结构**")
+                                # 安全地调用
+                                st.json(msg_to_json_compatible(raw_msgs_lookup[idx]), expanded=True)
+                        else:
+                            st.warning("未检测到数值字段。")
+                            if raw_msgs_lookup:
+                                st.json(msg_to_json_compatible(raw_msgs_lookup[0]))
+
+                st.divider()
+                st.header("✂️ 3. 裁剪与导出")
+                st.caption("将裁剪后的数据导出为标准的 ROS2 MCAP 格式。")
+
+                crop_tab1, crop_tab2 = st.tabs(["⏱️ 按时间范围裁剪", "🎞️ 按 Topic 帧范围裁剪"])
+                
+                # --- 最终确定的裁剪区间 (纳秒) ---
+                final_start_ns = start_time_ns
+                final_end_ns = end_time_ns
+                
+                # --- 模式 1: 时间轴裁剪 ---
+                with crop_tab1:
+                    st.markdown("直接拖动滑块选择保留的时间段。")
+                    range_sec = st.slider(
+                        "选择保留的时间范围 (秒)",
+                        min_value=0.0,
+                        max_value=duration_sec,
+                        value=(0.0, duration_sec),
+                        step=0.1
+                    )
+                    if st.checkbox("确认使用时间范围", key="check_time"):
+                        final_start_ns = start_time_ns + int(range_sec[0] * 1e9)
+                        final_end_ns = start_time_ns + int(range_sec[1] * 1e9)
+                        st.success(f"已选定: {range_sec[0]}s 至 {range_sec[1]}s")
+
+                # --- 模式 2: Topic 帧裁剪 ---
+                with crop_tab2:
+                    st.markdown("选择一个参考 Topic，根据其帧数来确定裁剪时间点。")
+                    ref_topic = st.selectbox("选择参考 Topic:", df_topics["Topic"].tolist(), key="ref_topic_crop")
+                    
+                    if ref_topic:
+                        ref_count = reader.topics[ref_topic].msgcount
+                        frame_range = st.slider(
+                            f"选择 {ref_topic} 的保留帧数范围",
+                            min_value=0,
+                            max_value=ref_count,
+                            value=(0, ref_count)
+                        )
+                        
+                        if st.button("计算对应时间戳", key="calc_ts"):
+                            with st.spinner("正在查找对应帧的时间戳..."):
+                                # 我们需要快速扫描一遍这个 Topic 找到对应帧的时间
+                                ref_conns = [x for x in reader.connections if x.topic == ref_topic]
                                 
-                                output_file_path = out_path
-                                export_name += ".mcap"
-
-                            # --- 成功处理 ---
-                            if output_file_path and output_file_path.exists():
-                                st.session_state['export_file'] = {
-                                    "path": output_file_path,
-                                    "name": export_name,
-                                    "mime": mime_type
-                                }
-                                status.update(label="✅ 导出成功！", state="complete")
+                                found_start = None
+                                found_end = None
+                                
+                                # 优化：只遍历该 Topic
+                                current_idx = 0
+                                target_start_idx = frame_range[0]
+                                target_end_idx = frame_range[1]
+                                
+                                # 如果 range 是 (0, max)，直接用全局时间
+                                if target_start_idx == 0:
+                                    found_start = start_time_ns
+                                
+                                for conn, ts, _ in reader.messages(connections=ref_conns):
+                                    if current_idx == target_start_idx and found_start is None:
+                                        found_start = ts
+                                    if current_idx == target_end_idx - 1: # end is exclusive/inclusive handling
+                                        found_end = ts
+                                        break # 找到结束点就可以停了
+                                    current_idx += 1
+                                
+                                # 边界处理
+                                if found_end is None: found_end = end_time_ns
+                                if found_start is None: found_start = start_time_ns
+                                
+                                # 更新全局变量供导出使用
+                                st.session_state['frame_crop_start'] = found_start
+                                st.session_state['frame_crop_end'] = found_end
+                                
+                                s_sec = (found_start - start_time_ns) * 1e-9
+                                e_sec = (found_end - start_time_ns) * 1e-9
+                                st.info(f"对应时间段: {s_sec:.2f}s - {e_sec:.2f}s")
+                        
+                        if st.checkbox("确认使用帧范围", key="check_frame"):
+                            if 'frame_crop_start' in st.session_state:
+                                final_start_ns = st.session_state['frame_crop_start']
+                                final_end_ns = st.session_state['frame_crop_end']
+                                st.success("已锁定帧对应的时间戳。")
                             else:
-                                status.update(label="❌ 导出失败：文件未生成", state="error")
+                                st.warning("请先点击'计算对应时间戳'")
 
-                        except Exception as e:
-                            st.error(f"导出过程出错: {e}")
-                            import traceback
-                            st.text(traceback.format_exc())
-                            status.update(label="❌ 出错", state="error")
+                # st.divider()
+                
+                final_start = final_start_ns * 1e9
+                final_end = final_end_ns * 1e9
 
-                # 显示下载按钮
-                if 'export_file' in st.session_state:
-                    ef = st.session_state['export_file']
-                    if ef["path"].exists():
-                        with open(ef["path"], "rb") as f:
-                            st.download_button(
-                                label=f"⬇️ 下载 {ef['name']}",
-                                data=f,
-                                file_name=ef['name'],
-                                mime=ef['mime']
-                            )
+                # 2. 导出格式选择
+                st.markdown("#### 导出设置")
+                
+                # 构建可用的格式列表
+                format_options = {}
+                if Db3Writer: format_options["ROS2 SQLite (.db3)"] = "db3"
+                if BagWriter: format_options["ROS1 (.bag)"] = "bag"
+                if McapWriter: format_options["ROS2 MCAP (.mcap)"] = "mcap"
+                else: st.warning("⚠️ 检测到环境缺少 MCAP 支持，已自动隐藏 MCAP 选项。")
+
+                if not format_options:
+                    st.error("❌ 严重错误：未检测到任何可用的 Writer 模块，请检查 rosbags 安装。")
+                else:
+                    selected_fmt_label = st.radio("选择导出格式", list(format_options.keys()))
+                    selected_fmt = format_options[selected_fmt_label]
+
+                    if st.button("🚀 开始导出"):
+                        export_name = f"cropped_data"
+                        output_file_path = None
+                        mime_type = "application/octet-stream"
+                        
+                        # 定义一个集合，用来记录哪些 topic 因为缺少定义而被跳过
+                        skipped_conn_ids = set()
+
+                        with st.status("正在处理...", expanded=True) as status:
+                            try:
+                                # ==================================================
+                                # 1. ROS2 .db3 导出 (带跳过逻辑)
+                                # ==================================================
+                                if selected_fmt == "db3":
+                                    status.write("初始化 ROS2 SQLite Writer...")
+                                    out_dir = temp_dir_path / "output_db3"
+                                    if out_dir.exists(): shutil.rmtree(out_dir)
+                                    
+                                    # 确保使用 Db3Writer
+                                    if Db3Writer is None:
+                                        raise ImportError("无法导入 Db3Writer，请检查 rosbags 安装")
+
+                                    with Db3Writer(out_dir, version=9) as writer:
+                                        conn_map = {}
+                                        
+                                        # --- 第一步：注册 Connection (带异常捕获) ---
+                                        for c in reader.connections:
+                                            try:
+                                                conn_map[c.id] = writer.add_connection(
+                                                    topic=c.topic, 
+                                                    msgtype=c.msgtype, 
+                                                    typestore=reader.typestore, 
+                                                    digest=c.digest
+                                                )
+                                            except Exception as e:
+                                                # 如果报错 (Unknown Type)，则记录下来跳过，不让程序崩掉
+                                                print(f"Skipping {c.topic}: {e}")
+                                                skipped_conn_ids.add(c.id)
+                                                st.warning(f"⚠️ 跳过 Topic: `{c.topic}` (原因: 缺少类型定义 {c.msgtype})")
+
+                                        # --- 第二步：写入消息 ---
+                                        status.write("正在写入消息...")
+                                        for conn, ts, raw in reader.messages():
+                                            # 如果这个 connection 被标记为跳过，则不写入
+                                            if conn.id in skipped_conn_ids:
+                                                continue
+                                                
+                                            if final_start <= ts <= final_end:
+                                                writer.write_message(conn_map[conn.id], ts, raw)
+                                    
+                                    status.write("正在压缩为 ZIP...")
+                                    zip_path = shutil.make_archive(temp_dir_path / export_name, 'zip', out_dir)
+                                    output_file_path = Path(zip_path)
+                                    mime_type = "application/zip"
+                                    export_name += ".zip"
+
+                                # ==================================================
+                                # 2. ROS1 .bag 导出 (最稳健)
+                                # ==================================================
+                                elif selected_fmt == "bag":
+                                    status.write("初始化 ROS1 Writer...")
+                                    out_path = temp_dir_path / (export_name + ".bag")
+                                    
+                                    if BagWriter is None:
+                                        raise ImportError("无法导入 BagWriter")
+
+                                    with BagWriter(out_path) as writer:
+                                        conn_map = {}
+                                        for c in reader.connections:
+                                            try:
+                                                msg_def_str = c.msgdef
+                                                if not isinstance(msg_def_str, str):
+                                                    msg_def_str = getattr(msg_def_str, 'definition', str(msg_def_str))
+                                                
+                                                safe_digest = c.digest if c.digest else "0" * 32
+                                                
+                                                conn_map[c.id] = writer.add_connection(
+                                                    topic=c.topic,
+                                                    msgtype=c.msgtype,
+                                                    msgdef=msg_def_str, 
+                                                    md5sum=safe_digest
+                                                )
+                                            except Exception as e:
+                                                skipped_conn_ids.add(c.id)
+                                                st.warning(f"⚠️ 跳过 Topic: `{c.topic}` (ROS1 转换失败)")
+
+                                        status.write("正在写入消息...")
+                                        for conn, ts, raw in reader.messages():
+                                            if conn.id in skipped_conn_ids: continue
+                                            if final_start <= ts <= final_end:
+                                                writer.write_message(conn_map[conn.id], ts, raw)
+                                    
+                                    output_file_path = out_path
+                                    export_name += ".bag"
+                                
+                                # ==================================================
+                                # 3. MCAP 导出 (带跳过逻辑)
+                                # ==================================================
+                                elif selected_fmt == "mcap":
+                                    # 检查是否真的有 McapWriter
+                                    if McapWriter is None:
+                                        st.error("❌ 你的环境缺少 rosbags[mcap] 支持，无法导出 MCAP。请使用 .bag 或 .db3。")
+                                        # 可以在这里抛出异常停止，或者直接 return
+                                        raise ImportError("McapWriter module not found")
+
+                                    status.write("初始化 MCAP Writer...")
+                                    out_path = temp_dir_path / (export_name + ".mcap")
+                                    
+                                    with McapWriter(out_path, version=9) as writer:
+                                        conn_map = {}
+                                        for c in reader.connections:
+                                            try:
+                                                # 注意：MCAP 不接受 digest 参数
+                                                conn_map[c.id] = writer.add_connection(
+                                                    topic=c.topic, 
+                                                    msgtype=c.msgtype, 
+                                                    typestore=reader.typestore
+                                                )
+                                            except Exception as e:
+                                                skipped_conn_ids.add(c.id)
+                                                st.warning(f"⚠️ 跳过 Topic: `{c.topic}` (原因: 缺少类型定义)")
+
+                                        status.write("正在写入消息...")
+                                        for conn, ts, raw in reader.messages():
+                                            if conn.id in skipped_conn_ids: continue
+                                            if final_start <= ts <= final_end:
+                                                writer.write_message(conn_map[conn.id], ts, raw)
+                                    
+                                    output_file_path = out_path
+                                    export_name += ".mcap"
+
+                                # --- 成功处理 ---
+                                if output_file_path and output_file_path.exists():
+                                    st.session_state['export_file'] = {
+                                        "path": output_file_path,
+                                        "name": export_name,
+                                        "mime": mime_type
+                                    }
+                                    status.update(label="✅ 导出成功！", state="complete")
+                                else:
+                                    status.update(label="❌ 导出失败：文件未生成", state="error")
+
+                            except Exception as e:
+                                st.error(f"导出过程出错: {e}")
+                                import traceback
+                                st.text(traceback.format_exc())
+                                status.update(label="❌ 出错", state="error")
+
+                    # 显示下载按钮
+                    if 'export_file' in st.session_state:
+                        ef = st.session_state['export_file']
+                        if ef["path"].exists():
+                            with open(ef["path"], "rb") as f:
+                                st.download_button(
+                                    label=f"⬇️ 下载 {ef['name']}",
+                                    data=f,
+                                    file_name=ef['name'],
+                                    mime=ef['mime']
+                                )
+        except Exception as e:
+            st.error(f"❌ 读取文件失败: {e}")
+            st.caption("可能原因：上传的文件已损坏，或者包含了无法解析的消息定义。")
     except Exception as e:
         st.error(f"运行出错: {e}")
         import traceback
