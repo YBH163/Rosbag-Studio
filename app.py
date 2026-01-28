@@ -176,6 +176,9 @@ if uploaded_files:
                 
                 # Topic 列表
                 topics = [{"Topic": t, "Type": i.msgtype, "Count": i.msgcount} for t, i in reader.topics.items()]
+                if not topics:
+                    st.warning("⚠️ 该文件不包含任何 Topic，可能是空文件或解析失败。")
+                    st.stop()
                 df_topics = pd.DataFrame(topics).sort_values("Count", ascending=False).reset_index(drop=True)
                 df_topics.insert(0, "No.", df_topics.index + 1)
 
@@ -341,7 +344,8 @@ if uploaded_files:
                             st.warning("未检测到数值字段。")
                             if raw_msgs_lookup:
                                 st.json(msg_to_json_compatible(raw_msgs_lookup[0]))
-
+                
+                # --- Day 3: 裁剪与导出 ---
                 st.divider()
                 st.header("✂️ 3. 裁剪与导出")
                 st.caption("将裁剪后的数据导出为标准的 ROS2 MCAP 格式。")
@@ -517,18 +521,30 @@ if uploaded_files:
                                         conn_map = {}
                                         for c in reader.connections:
                                             try:
-                                                msg_def_str = c.msgdef
-                                                if not isinstance(msg_def_str, str):
-                                                    msg_def_str = getattr(msg_def_str, 'definition', str(msg_def_str))
+                                                # 1. 尝试从 typestore 生成真正的 ROS 消息定义文本
+                                                # 这是解决 .bag 损坏的关键！
+                                                msg_def_gen, _ = reader.typestore.generate_msgdef(c.msgtype)
                                                 
-                                                safe_digest = c.digest if c.digest else "0" * 32
+                                                # 如果生成成功，使用生成的定义
+                                                final_def = msg_def_gen
                                                 
                                                 conn_map[c.id] = writer.add_connection(
-                                                    topic=c.topic,
-                                                    msgtype=c.msgtype,
-                                                    msgdef=msg_def_str, 
-                                                    md5sum=safe_digest
+                                                    topic=c.topic, msgtype=c.msgtype,
+                                                    msgdef=final_def, # 必须是文本
+                                                    md5sum=c.digest or "0"*32
                                                 )
+                                                # msg_def_str = c.msgdef
+                                                # if not isinstance(msg_def_str, str):
+                                                #     msg_def_str = getattr(msg_def_str, 'definition', str(msg_def_str))
+                                                
+                                                # safe_digest = c.digest if c.digest else "0" * 32
+                                                
+                                                # conn_map[c.id] = writer.add_connection(
+                                                #     topic=c.topic,
+                                                #     msgtype=c.msgtype,
+                                                #     msgdef=msg_def_str, 
+                                                #     md5sum=safe_digest
+                                                # )
                                             except Exception as e:
                                                 skipped_conn_ids.add(c.id)
                                                 st.warning(f"⚠️ 跳过 Topic: `{c.topic}` (ROS1 转换失败)")
