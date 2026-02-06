@@ -367,8 +367,21 @@ if uploaded_files:
                         step=0.1
                     )
                     if st.checkbox("确认使用时间范围", key="check_time"):
-                        final_start_ns = start_time_ns + int(range_sec[0] * 1e9)
-                        final_end_ns = start_time_ns + int(range_sec[1] * 1e9)
+                        # --- 核心修复：放宽时间边界 ---
+                        # 如果滑块在最左边 (0.0)，我们将起始时间设为 0 (epoch)，确保包含所有早期消息
+                        # 如果滑块在最右边 (duration)，我们将结束时间设为 MAX_INT，确保包含所有晚期消息
+                        if range_sec[0] <= 0.01:
+                            filter_start_ns = 0 
+                        else:
+                            filter_start_ns = start_time_ns + int(range_sec[0] * 1e9)
+                        
+                        if range_sec[1] >= duration_sec - 0.01:
+                            filter_end_ns = 2**63 - 1 # Int64 Max
+                        else:
+                            filter_end_ns = start_time_ns + int(range_sec[1] * 1e9)
+
+                        final_start_ns = filter_start_ns
+                        final_end_ns = filter_end_ns
                         st.success(f"已选定: {range_sec[0]}s 至 {range_sec[1]}s")
 
                 # --- 模式 2: Topic 帧裁剪 ---
@@ -432,8 +445,8 @@ if uploaded_files:
 
                 # st.divider()
                 
-                final_start = final_start_ns * 1e9
-                final_end = final_end_ns * 1e9
+                final_start = final_start_ns 
+                final_end = final_end_ns 
 
                 # 2. 导出格式选择
                 st.markdown("#### 导出设置")
