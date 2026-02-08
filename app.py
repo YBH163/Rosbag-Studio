@@ -136,35 +136,195 @@ def decode_image(msg, msg_type):
 st.set_page_config(page_title="ROS Bag 工具箱 Pro", layout="wide", page_icon="🛠️")
 st.title("🛠️ ROS Bag 交互式处理工具 (Pro)")
 
-# --- 侧边栏 ---
-with st.sidebar:
-    st.header("📂 文件上传")
-    uploaded_files = st.file_uploader("支持 .bag, .mcap, .db3+.yaml", accept_multiple_files=True)
 
-if uploaded_files:
-    temp_dir = tempfile.mkdtemp()
-    temp_dir_path = Path(temp_dir)
+# # --- 侧边栏 ---
+# with st.sidebar:
+#     st.header("📂 文件上传")
+#     uploaded_files = st.file_uploader("支持 .bag, .mcap, .db3+.yaml", accept_multiple_files=True)
+
+# if uploaded_files:
+#     temp_dir = tempfile.mkdtemp()
+#     temp_dir_path = Path(temp_dir)
     
+#     try:
+#         # 保存文件
+#         for f in uploaded_files:
+#             with open(temp_dir_path / f.name, "wb") as w: w.write(f.getvalue())
+        
+#         # 识别路径
+#         files = [f.name for f in temp_dir_path.iterdir()]
+#         bag_path = None
+#         if any(f.endswith(".bag") for f in files): bag_path = temp_dir_path / next(f for f in files if f.endswith(".bag"))
+#         elif any(f.endswith(".mcap") for f in files): bag_path = temp_dir_path / next(f for f in files if f.endswith(".mcap"))
+#         elif "metadata.yaml" in files: bag_path = temp_dir_path
+        
+#         if not bag_path:
+#             st.error("❌ 无法识别 Bag 文件结构")
+#             st.stop()
+
+with st.sidebar:
+    st.header("📂 数据源设置")
+    
+    # 1. 选择模式
+    data_source = st.radio(
+        "选择数据来源",
+        ("📤 上传文件 (从 Windows)", "🖥️ 服务器本地文件 (从 Ubuntu)"),
+        index=1 # 默认选服务器本地，适合远程开发
+    )
+
+    bag_paths = [] # 用来存最终要处理的文件路径列表
+
+    if data_source == "📤 上传文件 (从 Windows)":
+        uploaded_files = st.file_uploader(
+            "拖拽上传 (网速慢时不推荐)", 
+            type=["bag", "mcap", "db3", "yaml"],
+            accept_multiple_files=True
+        )
+        # 如果是上传模式，我们需要像之前一样处理临时文件
+        if uploaded_files:
+            # 创建临时目录
+            if 'temp_dir' not in st.session_state:
+                st.session_state['temp_dir'] = tempfile.mkdtemp()
+            temp_dir_path = Path(st.session_state['temp_dir'])
+            
+            for f in uploaded_files:
+                # 避免重复写入
+                target_path = temp_dir_path / f.name
+                if not target_path.exists():
+                    with open(target_path, "wb") as w:
+                        w.write(f.getvalue())
+            
+            # 重新扫描临时目录获取路径
+            # 注意：这里逻辑稍微变一下，我们把所有文件路径收集起来
+            # 对于 db3，我们稍后在主逻辑里自动识别文件夹
+            bag_paths = [temp_dir_path] # 简单起见，把临时目录给下去，让主逻辑找
+
+    else: # 🖥️ 服务器本地文件
+        st.info("直接读取 Ubuntu 上的文件 (支持 ROS1/ROS2)")
+        
+        # 1. 输入路径
+        default_path = "/home/ybh/" 
+        folder_path = st.text_input("输入 Bag 所在的文件夹路径:", value=default_path)
+        
+        bag_paths = []
+        
+        if os.path.exists(folder_path) and os.path.isdir(folder_path):
+            # --- 智能扫描逻辑 ---
+            candidates = []
+            
+            try:
+                # 遍历目录下的所有项
+                for item in os.listdir(folder_path):
+                    item_path = Path(folder_path) / item
+                    
+                    # 情况 A: 是标准单文件 (.bag, .mcap)
+                    if item.endswith(('.bag', '.mcap')):
+                        candidates.append(item)
+                    
+                    # 情况 B: 是 .db3 文件 (ROS2 Sqlite 单文件模式)
+                    elif item.endswith('.db3'):
+                        candidates.append(item)
+                        
+                    # 情况 C: 是一个文件夹，且里面包含 metadata.yaml (ROS2 文件夹模式)
+                    elif item_path.is_dir() and (item_path / "metadata.yaml").exists():
+                        candidates.append(item + "/") # 加个斜杠标记它是文件夹
+                
+                candidates.sort()
+                
+                if candidates:
+                    selected_name = st.selectbox("选择文件或文件夹:", candidates)
+                    
+                    if selected_name:
+                        # 构造完整路径
+                        # 如果选的是文件夹(带/)，去掉斜杠
+                        clean_name = selected_name.rstrip("/")
+                        full_path = Path(folder_path) / clean_name
+                        
+                        # --- 核心修复：自动处理 ROS2 上下文 ---
+                        # 1. 如果用户选的是 .db3 文件
+                        if full_path.suffix == '.db3':
+                            # 检查同级目录下有没有 yaml
+                            yaml_path = full_path.parent / "metadata.yaml"
+                            if yaml_path.exists():
+                                st.success(f"✅ 检测到配套 metadata.yaml")
+                                # 对于 .db3，AnyReader 通常需要读取其【父目录】
+                                # 但为了逻辑统一，我们这里存文件路径，让主逻辑去处理 .parent
+                                bag_paths = [full_path] 
+                            else:
+                                st.warning("⚠️ 警告：选中了 .db3，但同级目录没找到 metadata.yaml！")
+                                bag_paths = [full_path]
+                        
+                        # 2. 如果用户选的是 ROS2 文件夹 (情况 C)
+                        elif full_path.is_dir():
+                            st.success(f"✅ 选中 ROS2 数据包目录")
+                            # 如果选的是目录，直接把目录路径传过去，AnyReader 能识别
+                            bag_paths = [full_path]
+                            
+                        # 3. 其他情况 (.bag, .mcap)
+                        else:
+                            bag_paths = [full_path]
+                else:
+                    st.warning("该目录下未找到 .bag, .mcap, .db3 或 ROS2 文件夹。")
+                    
+            except Exception as e:
+                st.error(f"读取目录失败: {e}")
+        else:
+            st.error("路径不存在或不是文件夹。")
+
+# ==========================================
+# 主逻辑处理 (兼容两种模式)
+# ==========================================
+# 只要 bag_paths 不为空，就开始处理
+
+if bag_paths:
+    # 核心变量：如果是上传模式，bag_paths[0] 是 temp_dir
+    # 如果是本地模式，bag_paths[0] 是具体的文件路径
+    
+    current_path = bag_paths[0]
+    final_bag_path = None # 最终确定要喂给 Reader 的路径
+
     try:
-        # 保存文件
-        for f in uploaded_files:
-            with open(temp_dir_path / f.name, "wb") as w: w.write(f.getvalue())
+        # --- 智能路径识别 (适配 DB3 文件夹 和 单文件) ---
+        if current_path.is_dir():
+            # 可能是上传的临时目录，也可能是本地选中的 db3 文件夹(虽然上面的 selectbox 选的是文件，但防万一)
+            # 或者是上传模式下的 temp_dir，需要进去找文件
+            files_in_dir = [f.name for f in current_path.iterdir()]
+            
+            if any(f.endswith(".bag") for f in files_in_dir):
+                final_bag_path = current_path / next(f for f in files_in_dir if f.endswith(".bag"))
+            elif any(f.endswith(".mcap") for f in files_in_dir):
+                final_bag_path = current_path / next(f for f in files_in_dir if f.endswith(".mcap"))
+            elif "metadata.yaml" in files_in_dir:
+                # 说明这个目录本身就是一个 db3 bag
+                final_bag_path = current_path
+            else:
+                # 可能是上传模式的临时目录，里面包含 .db3 文件和 .yaml
+                # 这种情况下，Reader 通常需要指向包含 yaml 的那个目录
+                # 我们假设上传逻辑把文件都平铺在 temp_dir 下了
+                pass 
+                # 如果是上传模式，我们之前把文件写到了 temp_dir。
+                # 如果传的是 db3 + yaml，它们都在 temp_dir 下。
+                # 所以 final_bag_path = current_path (即 temp_dir) 就可以
+                if data_source.startswith("📤"):
+                    if "metadata.yaml" in files_in_dir:
+                        final_bag_path = current_path
+        else:
+            # 是个具体的文件 (.bag, .mcap)
+            final_bag_path = current_path
+            # 特殊情况：如果是 .db3 文件，AnyReader 通常需要的是它所在的文件夹
+            if final_bag_path.suffix == ".db3":
+                final_bag_path = final_bag_path.parent
         
-        # 识别路径
-        files = [f.name for f in temp_dir_path.iterdir()]
-        bag_path = None
-        if any(f.endswith(".bag") for f in files): bag_path = temp_dir_path / next(f for f in files if f.endswith(".bag"))
-        elif any(f.endswith(".mcap") for f in files): bag_path = temp_dir_path / next(f for f in files if f.endswith(".mcap"))
-        elif "metadata.yaml" in files: bag_path = temp_dir_path
-        
-        if not bag_path:
-            st.error("❌ 无法识别 Bag 文件结构")
+        if not final_bag_path:
+            st.error("❌ 无法识别 Bag 路径。")
             st.stop()
+            
+        st.success(f"正在加载: `{final_bag_path}`")
 
         # 读取
         typestore = get_typestore(Stores.ROS2_HUMBLE)
         try:
-            with AnyReader([bag_path], default_typestore=typestore) as reader:
+            with AnyReader([final_bag_path], default_typestore=typestore) as reader:
                 
                 # 基础数据
                 duration_ns = (reader.duration or 0)
