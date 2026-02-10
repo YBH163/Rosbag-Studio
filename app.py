@@ -672,7 +672,8 @@ if bag_paths:
                                                 continue
                                                 
                                             if final_start <= ts <= final_end:
-                                                writer.write_message(conn_map[conn.id], ts, raw)
+                                                # writer.write_message(conn_map[conn.id], ts, raw)
+                                                writer.write(conn_map[conn.id], ts, raw)
                                     
                                     status.write("正在压缩为 ZIP...")
                                     zip_path = shutil.make_archive(temp_dir_path / export_name, 'zip', out_dir)
@@ -726,7 +727,8 @@ if bag_paths:
                                         for conn, ts, raw in reader.messages():
                                             if conn.id in skipped_conn_ids: continue
                                             if final_start <= ts <= final_end:
-                                                writer.write_message(conn_map[conn.id], ts, raw)
+                                                # writer.write_message(conn_map[conn.id], ts, raw)
+                                                writer.write(conn_map[conn.id], ts, raw)
                                     
                                     output_file_path = out_path
                                     export_name += ".bag"
@@ -762,7 +764,8 @@ if bag_paths:
                                         for conn, ts, raw in reader.messages():
                                             if conn.id in skipped_conn_ids: continue
                                             if final_start <= ts <= final_end:
-                                                writer.write_message(conn_map[conn.id], ts, raw)
+                                                # writer.write_message(conn_map[conn.id], ts, raw)
+                                                writer.write(conn_map[conn.id], ts, raw)
                                     
                                     output_file_path = out_path
                                     export_name += ".mcap"
