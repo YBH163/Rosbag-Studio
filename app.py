@@ -277,6 +277,12 @@ with st.sidebar:
 # 只要 bag_paths 不为空，就开始处理
 
 if bag_paths:
+    # 确保我们始终有一个临时目录可用于导出或上传模式
+    # 上传模式在 earlier code 中已初始化，但本地模式可能没有。
+    if 'temp_dir' not in st.session_state:
+        st.session_state['temp_dir'] = tempfile.mkdtemp()
+    temp_dir_path = Path(st.session_state['temp_dir'])
+
     # 核心变量：如果是上传模式，bag_paths[0] 是 temp_dir
     # 如果是本地模式，bag_paths[0] 是具体的文件路径
     
@@ -646,34 +652,33 @@ if bag_paths:
                                     if Db3Writer is None:
                                         raise ImportError("无法导入 Db3Writer，请检查 rosbags 安装")
 
+                                    # 为防止之前的 reader.messages() 调用耗尽迭代器，
+                                    # 在导出时重新打开一个新的 AnyReader 进行遍历。
                                     with Db3Writer(out_dir, version=9) as writer:
                                         conn_map = {}
-                                        
-                                        # --- 第一步：注册 Connection (带异常捕获) ---
-                                        for c in reader.connections:
-                                            try:
-                                                conn_map[c.id] = writer.add_connection(
-                                                    topic=c.topic, 
-                                                    msgtype=c.msgtype, 
-                                                    typestore=reader.typestore, 
-                                                    digest=c.digest
-                                                )
-                                            except Exception as e:
-                                                # 如果报错 (Unknown Type)，则记录下来跳过，不让程序崩掉
-                                                print(f"Skipping {c.topic}: {e}")
-                                                skipped_conn_ids.add(c.id)
-                                                st.warning(f"⚠️ 跳过 Topic: `{c.topic}` (原因: 缺少类型定义 {c.msgtype})")
 
-                                        # --- 第二步：写入消息 ---
-                                        status.write("正在写入消息...")
-                                        for conn, ts, raw in reader.messages():
-                                            # 如果这个 connection 被标记为跳过，则不写入
-                                            if conn.id in skipped_conn_ids:
-                                                continue
-                                                
-                                            if final_start <= ts <= final_end:
-                                                # writer.write_message(conn_map[conn.id], ts, raw)
-                                                writer.write(conn_map[conn.id], ts, raw)
+                                        with AnyReader([final_bag_path], default_typestore=typestore) as export_reader:
+                                            # --- 第一步：注册 Connection (带异常捕获) ---
+                                            for c in export_reader.connections:
+                                                try:
+                                                    conn_map[c.id] = writer.add_connection(
+                                                        topic=c.topic, 
+                                                        msgtype=c.msgtype, 
+                                                        typestore=export_reader.typestore, 
+                                                        digest=c.digest
+                                                    )
+                                                except Exception as e:
+                                                    print(f"Skipping {c.topic}: {e}")
+                                                    skipped_conn_ids.add(c.id)
+                                                    st.warning(f"⚠️ 跳过 Topic: `{c.topic}` (原因: 缺少类型定义 {c.msgtype})")
+
+                                            # --- 第二步：写入消息 ---
+                                            status.write("正在写入消息...")
+                                            for conn, ts, raw in export_reader.messages():
+                                                if conn.id in skipped_conn_ids:
+                                                    continue
+                                                if final_start <= ts <= final_end:
+                                                    writer.write(conn_map[conn.id], ts, raw)
                                     
                                     status.write("正在压缩为 ZIP...")
                                     zip_path = shutil.make_archive(temp_dir_path / export_name, 'zip', out_dir)
@@ -693,42 +698,26 @@ if bag_paths:
 
                                     with BagWriter(out_path) as writer:
                                         conn_map = {}
-                                        for c in reader.connections:
-                                            try:
-                                                # 1. 尝试从 typestore 生成真正的 ROS 消息定义文本
-                                                # 这是解决 .bag 损坏的关键！
-                                                msg_def_gen, _ = reader.typestore.generate_msgdef(c.msgtype)
-                                                
-                                                # 如果生成成功，使用生成的定义
-                                                final_def = msg_def_gen
-                                                
-                                                conn_map[c.id] = writer.add_connection(
-                                                    topic=c.topic, msgtype=c.msgtype,
-                                                    msgdef=final_def, # 必须是文本
-                                                    md5sum=c.digest or "0"*32
-                                                )
-                                                # msg_def_str = c.msgdef
-                                                # if not isinstance(msg_def_str, str):
-                                                #     msg_def_str = getattr(msg_def_str, 'definition', str(msg_def_str))
-                                                
-                                                # safe_digest = c.digest if c.digest else "0" * 32
-                                                
-                                                # conn_map[c.id] = writer.add_connection(
-                                                #     topic=c.topic,
-                                                #     msgtype=c.msgtype,
-                                                #     msgdef=msg_def_str, 
-                                                #     md5sum=safe_digest
-                                                # )
-                                            except Exception as e:
-                                                skipped_conn_ids.add(c.id)
-                                                st.warning(f"⚠️ 跳过 Topic: `{c.topic}` (ROS1 转换失败)")
+                                        # 重开一个 reader 以防先前遍历消耗了原始对象
+                                        with AnyReader([final_bag_path], default_typestore=typestore) as export_reader:
+                                            for c in export_reader.connections:
+                                                try:
+                                                    msg_def_gen, _ = export_reader.typestore.generate_msgdef(c.msgtype)
+                                                    final_def = msg_def_gen
+                                                    conn_map[c.id] = writer.add_connection(
+                                                        topic=c.topic, msgtype=c.msgtype,
+                                                        msgdef=final_def, # 必须是文本
+                                                        md5sum=c.digest or "0"*32
+                                                    )
+                                                except Exception as e:
+                                                    skipped_conn_ids.add(c.id)
+                                                    st.warning(f"⚠️ 跳过 Topic: `{c.topic}` (ROS1 转换失败)")
 
-                                        status.write("正在写入消息...")
-                                        for conn, ts, raw in reader.messages():
-                                            if conn.id in skipped_conn_ids: continue
-                                            if final_start <= ts <= final_end:
-                                                # writer.write_message(conn_map[conn.id], ts, raw)
-                                                writer.write(conn_map[conn.id], ts, raw)
+                                            status.write("正在写入消息...")
+                                            for conn, ts, raw in export_reader.messages():
+                                                if conn.id in skipped_conn_ids: continue
+                                                if final_start <= ts <= final_end:
+                                                    writer.write(conn_map[conn.id], ts, raw)
                                     
                                     output_file_path = out_path
                                     export_name += ".bag"
@@ -748,28 +737,26 @@ if bag_paths:
                                     
                                     with McapWriter(out_path, version=9) as writer:
                                         conn_map = {}
-                                        for c in reader.connections:
-                                            try:
-                                                # 注意：MCAP 不接受 digest 参数
-                                                conn_map[c.id] = writer.add_connection(
-                                                    topic=c.topic, 
-                                                    msgtype=c.msgtype, 
-                                                    typestore=reader.typestore
-                                                )
-                                            except Exception as e:
-                                                skipped_conn_ids.add(c.id)
-                                                st.warning(f"⚠️ 跳过 Topic: `{c.topic}` (原因: 缺少类型定义)")
+                                        with AnyReader([final_bag_path], default_typestore=typestore) as export_reader:
+                                            for c in export_reader.connections:
+                                                try:
+                                                    conn_map[c.id] = writer.add_connection(
+                                                        topic=c.topic, 
+                                                        msgtype=c.msgtype, 
+                                                        typestore=export_reader.typestore
+                                                    )
+                                                except Exception as e:
+                                                    skipped_conn_ids.add(c.id)
+                                                    st.warning(f"⚠️ 跳过 Topic: `{c.topic}` (原因: 缺少类型定义)")
 
-                                        status.write("正在写入消息...")
-                                        for conn, ts, raw in reader.messages():
-                                            if conn.id in skipped_conn_ids: continue
-                                            if final_start <= ts <= final_end:
-                                                # writer.write_message(conn_map[conn.id], ts, raw)
-                                                writer.write(conn_map[conn.id], ts, raw)
+                                            status.write("正在写入消息...")
+                                            for conn, ts, raw in export_reader.messages():
+                                                if conn.id in skipped_conn_ids: continue
+                                                if final_start <= ts <= final_end:
+                                                    writer.write(conn_map[conn.id], ts, raw)
                                     
                                     output_file_path = out_path
                                     export_name += ".mcap"
-
                                 # --- 成功处理 ---
                                 if output_file_path and output_file_path.exists():
                                     st.session_state['export_file'] = {
