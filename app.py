@@ -8,7 +8,9 @@ from pathlib import Path
 import tempfile
 import shutil
 import os
+import inspect
 from rosbags.typesys import Stores, get_typestore
+from rosbags.interfaces import ConnectionExtRosbag2
 from datetime import datetime
 import plotly.express as px
 
@@ -129,6 +131,115 @@ def decode_image(msg, msg_type):
     except Exception as e:
         return None
 
+
+def reset_temp_workspace():
+    """清理并重建当前会话的临时工作目录，避免旧文件污染新分析。"""
+    old_temp_dir = st.session_state.get('temp_dir')
+    if old_temp_dir and Path(old_temp_dir).exists():
+        shutil.rmtree(old_temp_dir, ignore_errors=True)
+
+    st.session_state['temp_dir'] = tempfile.mkdtemp(prefix="rosbag_cleaner_")
+    st.session_state.pop('export_file', None)
+
+
+def prepare_upload_workspace(uploaded_files):
+    """
+    为本次上传准备一个干净目录。
+    只要上传文件列表或大小变化，就重建目录，避免同名文件不覆盖导致读到旧包。
+    """
+    signature = tuple(sorted((f.name, f.size) for f in uploaded_files))
+    if st.session_state.get('upload_signature') != signature:
+        reset_temp_workspace()
+        st.session_state['upload_signature'] = signature
+
+    temp_dir_path = Path(st.session_state['temp_dir'])
+    for f in uploaded_files:
+        target_path = temp_dir_path / f.name
+        with open(target_path, "wb") as w:
+            w.write(f.getvalue())
+
+    return temp_dir_path
+
+
+def verify_exported_bag(bag_path, typestore):
+    """
+    回读导出的 bag，确认其中确实有消息，避免用户下载到空包。
+    """
+    with AnyReader([bag_path], default_typestore=typestore) as verify_reader:
+        return {
+            "message_count": verify_reader.message_count or 0,
+            "topic_count": len(verify_reader.topics),
+            "duration_ns": verify_reader.duration or 0,
+        }
+
+
+def add_connection_compat(writer, connection, typestore, target_format):
+    """
+    兼容不同 rosbags 版本的 add_connection 签名。
+    优先只传当前版本明确支持的参数，避免因为 digest 等参数不兼容导致所有 topic 都被跳过。
+    """
+    params = inspect.signature(writer.add_connection).parameters
+    kwargs = {
+        "topic": connection.topic,
+        "msgtype": connection.msgtype,
+    }
+
+    if "typestore" in params:
+        kwargs["typestore"] = typestore
+
+    if target_format == "db3":
+        if "msgdef" in params and getattr(connection, "msgdef", None):
+            kwargs["msgdef"] = connection.msgdef.data
+        if "rihs01" in params and getattr(connection, "digest", None):
+            kwargs["rihs01"] = connection.digest
+        if "serialization_format" in params:
+            serialization_format = "cdr"
+            if isinstance(getattr(connection, "ext", None), ConnectionExtRosbag2):
+                serialization_format = connection.ext.serialization_format or "cdr"
+            kwargs["serialization_format"] = serialization_format
+        if "offered_qos_profiles" in params:
+            offered_qos_profiles = ()
+            if isinstance(getattr(connection, "ext", None), ConnectionExtRosbag2):
+                offered_qos_profiles = tuple(connection.ext.offered_qos_profiles or [])
+            kwargs["offered_qos_profiles"] = offered_qos_profiles
+
+    elif target_format == "mcap":
+        if "msgdef" in params and getattr(connection, "msgdef", None):
+            kwargs["msgdef"] = connection.msgdef.data
+        if "rihs01" in params and getattr(connection, "digest", None):
+            kwargs["rihs01"] = connection.digest
+        if "serialization_format" in params:
+            serialization_format = "cdr"
+            if isinstance(getattr(connection, "ext", None), ConnectionExtRosbag2):
+                serialization_format = connection.ext.serialization_format or "cdr"
+            kwargs["serialization_format"] = serialization_format
+        if "offered_qos_profiles" in params:
+            offered_qos_profiles = ()
+            if isinstance(getattr(connection, "ext", None), ConnectionExtRosbag2):
+                offered_qos_profiles = tuple(connection.ext.offered_qos_profiles or [])
+            kwargs["offered_qos_profiles"] = offered_qos_profiles
+
+    elif target_format == "bag":
+        msgdef = None
+        if getattr(connection, "msgdef", None):
+            msgdef = connection.msgdef.data
+        elif typestore is not None:
+            msgdef, _ = typestore.generate_msgdef(connection.msgtype)
+
+        if "msgdef" in params:
+            kwargs["msgdef"] = msgdef or ""
+        if "md5sum" in params:
+            kwargs["md5sum"] = getattr(connection, "digest", None) or "0" * 32
+        if "callerid" in params:
+            kwargs["callerid"] = None
+        if "latching" in params:
+            kwargs["latching"] = 0
+
+        # ROS1 Writer 不接受 typestore，删掉避免签名冲突。
+        kwargs.pop("typestore", None)
+
+    return writer.add_connection(**kwargs)
+
 # ==========================================
 # 2. 页面主逻辑
 # ==========================================
@@ -182,17 +293,7 @@ with st.sidebar:
         )
         # 如果是上传模式，我们需要像之前一样处理临时文件
         if uploaded_files:
-            # 创建临时目录
-            if 'temp_dir' not in st.session_state:
-                st.session_state['temp_dir'] = tempfile.mkdtemp()
-            temp_dir_path = Path(st.session_state['temp_dir'])
-            
-            for f in uploaded_files:
-                # 避免重复写入
-                target_path = temp_dir_path / f.name
-                if not target_path.exists():
-                    with open(target_path, "wb") as w:
-                        w.write(f.getvalue())
+            temp_dir_path = prepare_upload_workspace(uploaded_files)
             
             # 重新扫描临时目录获取路径
             # 注意：这里逻辑稍微变一下，我们把所有文件路径收集起来
@@ -656,21 +757,25 @@ if bag_paths:
                                     # 在导出时重新打开一个新的 AnyReader 进行遍历。
                                     with Db3Writer(out_dir, version=9) as writer:
                                         conn_map = {}
+                                        written_count = 0
 
                                         with AnyReader([final_bag_path], default_typestore=typestore) as export_reader:
                                             # --- 第一步：注册 Connection (带异常捕获) ---
                                             for c in export_reader.connections:
                                                 try:
-                                                    conn_map[c.id] = writer.add_connection(
-                                                        topic=c.topic, 
-                                                        msgtype=c.msgtype, 
-                                                        typestore=export_reader.typestore, 
-                                                        digest=c.digest
+                                                    conn_map[c.id] = add_connection_compat(
+                                                        writer,
+                                                        c,
+                                                        export_reader.typestore,
+                                                        "db3",
                                                     )
                                                 except Exception as e:
-                                                    print(f"Skipping {c.topic}: {e}")
+                                                    print(f"Skipping {c.topic}: {type(e).__name__}: {e}")
                                                     skipped_conn_ids.add(c.id)
-                                                    st.warning(f"⚠️ 跳过 Topic: `{c.topic}` (原因: 缺少类型定义 {c.msgtype})")
+                                                    st.warning(
+                                                        f"⚠️ 跳过 Topic: `{c.topic}` "
+                                                        f"(类型: {c.msgtype}，异常: {type(e).__name__}: {e})"
+                                                    )
 
                                             # --- 第二步：写入消息 ---
                                             status.write("正在写入消息...")
@@ -679,6 +784,21 @@ if bag_paths:
                                                     continue
                                                 if final_start <= ts <= final_end:
                                                     writer.write(conn_map[conn.id], ts, raw)
+                                                    written_count += 1
+
+                                    verify_info = verify_exported_bag(out_dir, typestore)
+                                    if verify_info["message_count"] == 0:
+                                        raise ValueError(
+                                            "导出的 ROS2 SQLite 包为空。"
+                                            f" 已注册 Topic: {len(conn_map)}，被跳过 Topic: {len(skipped_conn_ids)}，"
+                                            f" 实际写入消息: {written_count}。"
+                                            " 请重点检查页面上的“跳过 Topic”警告，通常是缺少消息类型定义导致。"
+                                        )
+
+                                    status.write(
+                                        f"导出校验通过：{verify_info['message_count']} 条消息，"
+                                        f"{verify_info['topic_count']} 个 Topic。"
+                                    )
                                     
                                     status.write("正在压缩为 ZIP...")
                                     zip_path = shutil.make_archive(temp_dir_path / export_name, 'zip', out_dir)
@@ -698,26 +818,43 @@ if bag_paths:
 
                                     with BagWriter(out_path) as writer:
                                         conn_map = {}
+                                        written_count = 0
                                         # 重开一个 reader 以防先前遍历消耗了原始对象
                                         with AnyReader([final_bag_path], default_typestore=typestore) as export_reader:
                                             for c in export_reader.connections:
                                                 try:
-                                                    msg_def_gen, _ = export_reader.typestore.generate_msgdef(c.msgtype)
-                                                    final_def = msg_def_gen
-                                                    conn_map[c.id] = writer.add_connection(
-                                                        topic=c.topic, msgtype=c.msgtype,
-                                                        msgdef=final_def, # 必须是文本
-                                                        md5sum=c.digest or "0"*32
+                                                    conn_map[c.id] = add_connection_compat(
+                                                        writer,
+                                                        c,
+                                                        export_reader.typestore,
+                                                        "bag",
                                                     )
                                                 except Exception as e:
                                                     skipped_conn_ids.add(c.id)
-                                                    st.warning(f"⚠️ 跳过 Topic: `{c.topic}` (ROS1 转换失败)")
+                                                    st.warning(
+                                                        f"⚠️ 跳过 Topic: `{c.topic}` "
+                                                        f"(类型: {c.msgtype}，异常: {type(e).__name__}: {e})"
+                                                    )
 
                                             status.write("正在写入消息...")
                                             for conn, ts, raw in export_reader.messages():
                                                 if conn.id in skipped_conn_ids: continue
                                                 if final_start <= ts <= final_end:
                                                     writer.write(conn_map[conn.id], ts, raw)
+                                                    written_count += 1
+
+                                    verify_info = verify_exported_bag(out_path, typestore)
+                                    if verify_info["message_count"] == 0:
+                                        raise ValueError(
+                                            "导出的 ROS1 bag 为空。"
+                                            f" 已注册 Topic: {len(conn_map)}，被跳过 Topic: {len(skipped_conn_ids)}，"
+                                            f" 实际写入消息: {written_count}。"
+                                        )
+
+                                    status.write(
+                                        f"导出校验通过：{verify_info['message_count']} 条消息，"
+                                        f"{verify_info['topic_count']} 个 Topic。"
+                                    )
                                     
                                     output_file_path = out_path
                                     export_name += ".bag"
@@ -737,23 +874,42 @@ if bag_paths:
                                     
                                     with McapWriter(out_path, version=9) as writer:
                                         conn_map = {}
+                                        written_count = 0
                                         with AnyReader([final_bag_path], default_typestore=typestore) as export_reader:
                                             for c in export_reader.connections:
                                                 try:
-                                                    conn_map[c.id] = writer.add_connection(
-                                                        topic=c.topic, 
-                                                        msgtype=c.msgtype, 
-                                                        typestore=export_reader.typestore
+                                                    conn_map[c.id] = add_connection_compat(
+                                                        writer,
+                                                        c,
+                                                        export_reader.typestore,
+                                                        "mcap",
                                                     )
                                                 except Exception as e:
                                                     skipped_conn_ids.add(c.id)
-                                                    st.warning(f"⚠️ 跳过 Topic: `{c.topic}` (原因: 缺少类型定义)")
+                                                    st.warning(
+                                                        f"⚠️ 跳过 Topic: `{c.topic}` "
+                                                        f"(类型: {c.msgtype}，异常: {type(e).__name__}: {e})"
+                                                    )
 
                                             status.write("正在写入消息...")
                                             for conn, ts, raw in export_reader.messages():
                                                 if conn.id in skipped_conn_ids: continue
                                                 if final_start <= ts <= final_end:
                                                     writer.write(conn_map[conn.id], ts, raw)
+                                                    written_count += 1
+
+                                    verify_info = verify_exported_bag(out_path, typestore)
+                                    if verify_info["message_count"] == 0:
+                                        raise ValueError(
+                                            "导出的 MCAP 包为空。"
+                                            f" 已注册 Topic: {len(conn_map)}，被跳过 Topic: {len(skipped_conn_ids)}，"
+                                            f" 实际写入消息: {written_count}。"
+                                        )
+
+                                    status.write(
+                                        f"导出校验通过：{verify_info['message_count']} 条消息，"
+                                        f"{verify_info['topic_count']} 个 Topic。"
+                                    )
                                     
                                     output_file_path = out_path
                                     export_name += ".mcap"
