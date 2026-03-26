@@ -9,8 +9,8 @@ import tempfile
 import shutil
 import os
 import inspect
-from rosbags.typesys import Stores, get_typestore
-from rosbags.interfaces import ConnectionExtRosbag2
+from rosbags.typesys import Stores, get_typestore, get_types_from_idl, get_types_from_msg
+from rosbags.interfaces import ConnectionExtRosbag2, MessageDefinitionFormat
 from datetime import datetime
 import plotly.express as px
 
@@ -221,15 +221,17 @@ def add_connection_compat(writer, connection, typestore, target_format):
 
     elif target_format == "bag":
         msgdef = None
-        if getattr(connection, "msgdef", None):
-            msgdef = connection.msgdef.data
-        elif typestore is not None:
-            msgdef, _ = typestore.generate_msgdef(connection.msgtype)
+        if typestore is not None:
+            msgdef, _ = typestore.generate_msgdef(connection.msgtype, ros_version=1)
 
         if "msgdef" in params:
             kwargs["msgdef"] = msgdef or ""
         if "md5sum" in params:
-            kwargs["md5sum"] = getattr(connection, "digest", None) or "0" * 32
+            if typestore is not None:
+                _, md5sum = typestore.generate_msgdef(connection.msgtype, ros_version=1)
+            else:
+                md5sum = "0" * 32
+            kwargs["md5sum"] = md5sum
         if "callerid" in params:
             kwargs["callerid"] = None
         if "latching" in params:
@@ -239,6 +241,40 @@ def add_connection_compat(writer, connection, typestore, target_format):
         kwargs.pop("typestore", None)
 
     return writer.add_connection(**kwargs)
+
+
+def ensure_connection_type_registered(typestore, connection):
+    """
+    对于 bag 中携带的自定义消息定义，按需注册进 typestore。
+    这样可以支持 ROS2 CDR -> ROS1 序列化转换。
+    """
+    if connection.msgtype in typestore.fielddefs:
+        return
+
+    if not getattr(connection, "msgdef", None):
+        return
+
+    try:
+        if connection.msgdef.format == MessageDefinitionFormat.IDL:
+            typs = get_types_from_idl(connection.msgdef.data)
+        else:
+            typs = get_types_from_msg(connection.msgdef.data, connection.msgtype)
+        typestore.register(typs)
+    except Exception:
+        # 注册失败时交由后续 add_connection / cdr_to_ros1 抛出更具体异常。
+        pass
+
+
+def convert_cdr_message_to_ros1(raw, connection, source_typestore, ros1_typestore):
+    """
+    将 ROS2 bag 中的原始消息转换为 ROS1 序列化格式。
+    优先走字节级快速转换，失败时退回到 反序列化 -> 重新序列化。
+    """
+    try:
+        return source_typestore.cdr_to_ros1(raw, connection.msgtype)
+    except Exception:
+        msg = source_typestore.deserialize_cdr(raw, connection.msgtype)
+        return ros1_typestore.serialize_ros1(msg, connection.msgtype)
 
 # ==========================================
 # 2. 页面主逻辑
@@ -466,151 +502,181 @@ if bag_paths:
                     selected_topic = st.selectbox("请选择要分析的 Topic:", df_topics["Topic"].tolist())
                 
                 if selected_topic:
-                    connections = [x for x in reader.connections if x.topic == selected_topic]
-                    msg_type = connections[0].msgtype
-                    total_msgs = reader.topics[selected_topic].msgcount
-                    
-                    with col_sel2:
-                        st.info(f"📌 类型: **{msg_type}**\n\n📦 数量: **{total_msgs}** 帧")
+                    try:
+                        connections = [x for x in reader.connections if x.topic == selected_topic]
+                        msg_type = connections[0].msgtype
+                        total_msgs = reader.topics[selected_topic].msgcount
+                        
+                        with col_sel2:
+                            st.info(f"📌 类型: **{msg_type}**\n\n📦 数量: **{total_msgs}** 帧")
 
-                    limit = 2000
-                    
-                    # --- A: 图像 ---
-                    if "Image" in msg_type:
-                        st.subheader("🖼️ 图像播放器")
-                        msgs = []
-                        with st.spinner(f"正在加载图像流 (前 {limit} 帧)..."):
+                        limit = 2000
+                        
+                        # --- A: 图像 ---
+                        if "Image" in msg_type:
+                            st.subheader("🖼️ 图像播放器")
+                            msgs = []
+                            with st.spinner(f"正在加载图像流 (前 {limit} 帧)..."):
+                                for conn, ts, rawdata in reader.messages(connections=connections):
+                                    if len(msgs) >= limit: break
+                                    msgs.append((ts, rawdata, conn))
+                            
+                            if msgs:
+                                slider_idx = st.slider("帧索引", 0, len(msgs)-1, 0)
+                                ts, raw, conn = msgs[slider_idx]
+                                msg = reader.deserialize(raw, conn.msgtype)
+                                
+                                img_data = decode_image(msg, msg_type)
+                                if img_data is not None:
+                                    st.image(img_data, caption=f"Frame {slider_idx} | Time: {(ts-reader.start_time)*1e-9:.2f}s")
+                                
+                                with st.expander("查看原始消息结构"):
+                                    st.json(msg_to_json_compatible(msg))
+                        
+                        # --- B: 点云 (已修复 size 问题) ---
+                        elif "PointCloud2" in msg_type:
+                            st.subheader("☁️ 点云可视化")
+                            msgs = []
                             for conn, ts, rawdata in reader.messages(connections=connections):
                                 if len(msgs) >= limit: break
                                 msgs.append((ts, rawdata, conn))
-                        
-                        if msgs:
-                            slider_idx = st.slider("帧索引", 0, len(msgs)-1, 0)
-                            ts, raw, conn = msgs[slider_idx]
-                            msg = reader.deserialize(raw, conn.msgtype)
-                            
-                            img_data = decode_image(msg, msg_type)
-                            if img_data is not None:
-                                st.image(img_data, caption=f"Frame {slider_idx} | Time: {(ts-reader.start_time)*1e-9:.2f}s")
-                            
-                            with st.expander("查看原始消息结构"):
-                                st.json(msg_to_json_compatible(msg))
-                    
-                    # --- B: 点云 (已修复 size 问题) ---
-                    elif "PointCloud2" in msg_type:
-                        st.subheader("☁️ 点云可视化")
-                        msgs = []
-                        for conn, ts, rawdata in reader.messages(connections=connections):
-                            if len(msgs) >= limit: break
-                            msgs.append((ts, rawdata, conn))
-                            
-                        if msgs:
-                            slider_idx = st.slider("选择点云帧", 0, len(msgs)-1, 0)
-                            ts, raw, conn = msgs[slider_idx]
-                            msg = reader.deserialize(raw, conn.msgtype)
-                            
-                            xyz = parse_pointcloud2(msg)
-                            
-                            if xyz is not None:
-                                # 采样
-                                if len(xyz) > 5000:
-                                    indices = np.random.choice(len(xyz), 5000, replace=False)
-                                    xyz_sample = xyz[indices]
-                                else:
-                                    xyz_sample = xyz
+                                
+                            if msgs:
+                                slider_idx = st.slider("选择点云帧", 0, len(msgs)-1, 0)
+                                ts, raw, conn = msgs[slider_idx]
+                                msg = reader.deserialize(raw, conn.msgtype)
+                                
+                                xyz = parse_pointcloud2(msg)
+                                
+                                if xyz is not None:
+                                    if len(xyz) > 5000:
+                                        indices = np.random.choice(len(xyz), 5000, replace=False)
+                                        xyz_sample = xyz[indices]
+                                    else:
+                                        xyz_sample = xyz
+                                        
+                                    fig = px.scatter_3d(
+                                        x=xyz_sample[:,0], y=xyz_sample[:,1], z=xyz_sample[:,2],
+                                        title=f"Frame {slider_idx} (Subsampled)",
+                                        opacity=0.8
+                                    )
+                                    fig.update_traces(marker=dict(size=1)) 
+                                    fig.update_layout(scene=dict(aspectmode='data'))
+                                    st.plotly_chart(fig, use_container_width=True)
                                     
-                                fig = px.scatter_3d(
-                                    x=xyz_sample[:,0], y=xyz_sample[:,1], z=xyz_sample[:,2],
-                                    title=f"Frame {slider_idx} (Subsampled)",
-                                    opacity=0.8
-                                )
-                                # --- 修复点：将 size 设置得很小 ---
-                                fig.update_traces(marker=dict(size=1)) 
-                                fig.update_layout(scene=dict(aspectmode='data'))
-                                st.plotly_chart(fig, use_container_width=True)
+                                with st.expander("原始消息"):
+                                    st.json(msg_to_json_compatible(msg))
+
+                        # --- C: PoseArray ---
+                        elif "PoseArray" in msg_type:
+                            st.subheader("📍 PoseArray 3D 可视化")
+                            msgs = []
+                            for conn, ts, rawdata in reader.messages(connections=connections):
+                                if len(msgs) >= limit: break
+                                msgs.append((ts, rawdata, conn))
+
+                            if msgs:
+                                slider_idx = st.slider("选择帧", 0, len(msgs)-1, 0)
+                                ts, raw, conn = msgs[slider_idx]
+                                msg = reader.deserialize(raw, conn.msgtype)
                                 
-                            with st.expander("原始消息"):
-                                st.json(msg_to_json_compatible(msg))
-
-                    # --- C: PoseArray ---
-                    elif "PoseArray" in msg_type:
-                        st.subheader("📍 PoseArray 3D 可视化")
-                        msgs = []
-                        for conn, ts, rawdata in reader.messages(connections=connections):
-                            if len(msgs) >= limit: break
-                            msgs.append((ts, rawdata, conn))
-
-                        if msgs:
-                            slider_idx = st.slider("选择帧", 0, len(msgs)-1, 0)
-                            ts, raw, conn = msgs[slider_idx]
-                            msg = reader.deserialize(raw, conn.msgtype)
-                            
-                            points = []
-                            for i, pose in enumerate(msg.poses):
-                                points.append({
-                                    "x": pose.position.x,
-                                    "y": pose.position.y,
-                                    "z": pose.position.z,
-                                    "id": i
-                                })
-                            
-                            if points:
-                                df_pose = pd.DataFrame(points)
-                                fig = px.scatter_3d(
-                                    df_pose, x="x", y="y", z="z", 
-                                    color="id", 
-                                    title=f"PoseArray Frame {slider_idx}"
-                                )
-                                fig.update_traces(marker=dict(size=3))
-                                fig.update_layout(scene=dict(aspectmode='data'))
-                                st.plotly_chart(fig, use_container_width=True)
+                                points = []
+                                for i, pose in enumerate(msg.poses):
+                                    points.append({
+                                        "x": pose.position.x,
+                                        "y": pose.position.y,
+                                        "z": pose.position.z,
+                                        "id": i
+                                    })
                                 
-                            with st.expander("原始消息"):
-                                st.json(msg_to_json_compatible(msg))
+                                if points:
+                                    df_pose = pd.DataFrame(points)
+                                    fig = px.scatter_3d(
+                                        df_pose, x="x", y="y", z="z", 
+                                        color="id", 
+                                        title=f"PoseArray Frame {slider_idx}"
+                                    )
+                                    fig.update_traces(marker=dict(size=3))
+                                    fig.update_layout(scene=dict(aspectmode='data'))
+                                    st.plotly_chart(fig, use_container_width=True)
+                                    
+                                with st.expander("原始消息"):
+                                    st.json(msg_to_json_compatible(msg))
 
-                    # --- D: 数值曲线 ---
-                    else:
-                        st.subheader("📈 数值趋势分析")
-                        data_list = []
-                        raw_msgs_lookup = []
-                        
-                        with st.spinner("正在提取数值曲线..."):
-                            progress = st.progress(0)
+                        # --- D: 日志消息 ---
+                        elif msg_type == "rcl_interfaces/msg/Log":
+                            st.subheader("🪵 日志查看器")
+                            log_rows = []
+                            raw_msgs_lookup = []
+
                             for i, (conn, ts, rawdata) in enumerate(reader.messages(connections=connections)):
-                                if i >= limit: break
+                                if i >= limit:
+                                    break
                                 msg = reader.deserialize(rawdata, conn.msgtype)
-                                val_dict = extract_numeric_data(msg)
-                                val_dict["Time"] = (ts - reader.start_time) * 1e-9
-                                data_list.append(val_dict)
+                                log_rows.append({
+                                    "Time": (ts - reader.start_time) * 1e-9,
+                                    "Level": int(msg.level),
+                                    "Name": msg.name,
+                                    "Message": msg.msg,
+                                    "File": msg.file,
+                                    "Function": msg.function,
+                                    "Line": int(msg.line),
+                                })
                                 raw_msgs_lookup.append(msg)
-                                if i % 100 == 0: progress.progress(i / min(total_msgs, limit))
-                            progress.empty()
-                        
-                        df = pd.DataFrame(data_list)
-                        
-                        if not df.empty and len(df.columns) > 1:
-                            y_cols = [c for c in df.columns if c != "Time"]
-                            fig = px.line(df, x="Time", y=y_cols, title=f"{selected_topic} Trend")
-                            st.plotly_chart(fig, use_container_width=True)
-                            
-                            st.divider()
-                            
-                            st.subheader("🔍 单帧详情")
-                            idx = st.slider("选择帧", 0, len(df)-1, 0)
-                            
-                            c1, c2 = st.columns([1, 2])
-                            with c1:
-                                st.markdown("**当前帧数值**")
-                                row_data = df.iloc[idx].to_frame(name="Value")
-                                st.dataframe(row_data, use_container_width=True)
-                            with c2:
-                                st.markdown("**完整消息结构**")
-                                # 安全地调用
+
+                            if log_rows:
+                                df_logs = pd.DataFrame(log_rows)
+                                st.dataframe(df_logs, use_container_width=True, hide_index=True)
+                                idx = st.slider("选择日志", 0, len(df_logs)-1, 0)
                                 st.json(msg_to_json_compatible(raw_msgs_lookup[idx]), expanded=True)
+                            else:
+                                st.warning("未读取到日志消息。")
+
+                        # --- E: 数值曲线 ---
                         else:
-                            st.warning("未检测到数值字段。")
-                            if raw_msgs_lookup:
-                                st.json(msg_to_json_compatible(raw_msgs_lookup[0]))
+                            st.subheader("📈 数值趋势分析")
+                            data_list = []
+                            raw_msgs_lookup = []
+                            
+                            with st.spinner("正在提取数值曲线..."):
+                                progress = st.progress(0)
+                                for i, (conn, ts, rawdata) in enumerate(reader.messages(connections=connections)):
+                                    if i >= limit: break
+                                    msg = reader.deserialize(rawdata, conn.msgtype)
+                                    val_dict = extract_numeric_data(msg)
+                                    val_dict["Time"] = (ts - reader.start_time) * 1e-9
+                                    data_list.append(val_dict)
+                                    raw_msgs_lookup.append(msg)
+                                    if i % 100 == 0: progress.progress(i / min(total_msgs, limit))
+                                progress.empty()
+                            
+                            df = pd.DataFrame(data_list)
+                            
+                            if not df.empty and len(df.columns) > 1:
+                                y_cols = [c for c in df.columns if c != "Time"]
+                                fig = px.line(df, x="Time", y=y_cols, title=f"{selected_topic} Trend")
+                                st.plotly_chart(fig, use_container_width=True)
+                                
+                                st.divider()
+                                
+                                st.subheader("🔍 单帧详情")
+                                idx = st.slider("选择帧", 0, len(df)-1, 0)
+                                
+                                c1, c2 = st.columns([1, 2])
+                                with c1:
+                                    st.markdown("**当前帧数值**")
+                                    row_data = df.iloc[idx].to_frame(name="Value")
+                                    st.dataframe(row_data, use_container_width=True)
+                                with c2:
+                                    st.markdown("**完整消息结构**")
+                                    st.json(msg_to_json_compatible(raw_msgs_lookup[idx]), expanded=True)
+                            else:
+                                st.warning("未检测到可绘制的数值字段。")
+                                if raw_msgs_lookup:
+                                    st.json(msg_to_json_compatible(raw_msgs_lookup[0]))
+                    except Exception as e:
+                        st.error(f"❌ 当前 Topic 无法可视化: {e}")
+                        st.caption("该错误只影响当前 Topic，不代表整个 bag 文件损坏。")
                 
                 # --- Day 3: 裁剪与导出 ---
                 st.divider()
@@ -763,6 +829,7 @@ if bag_paths:
                                             # --- 第一步：注册 Connection (带异常捕获) ---
                                             for c in export_reader.connections:
                                                 try:
+                                                    ensure_connection_type_registered(export_reader.typestore, c)
                                                     conn_map[c.id] = add_connection_compat(
                                                         writer,
                                                         c,
@@ -812,6 +879,7 @@ if bag_paths:
                                 elif selected_fmt == "bag":
                                     status.write("初始化 ROS1 Writer...")
                                     out_path = temp_dir_path / (export_name + ".bag")
+                                    ros1_typestore = get_typestore(Stores.ROS1_NOETIC)
                                     
                                     if BagWriter is None:
                                         raise ImportError("无法导入 BagWriter")
@@ -819,14 +887,17 @@ if bag_paths:
                                     with BagWriter(out_path) as writer:
                                         conn_map = {}
                                         written_count = 0
+                                        skipped_message_topics = set()
                                         # 重开一个 reader 以防先前遍历消耗了原始对象
                                         with AnyReader([final_bag_path], default_typestore=typestore) as export_reader:
                                             for c in export_reader.connections:
                                                 try:
+                                                    ensure_connection_type_registered(export_reader.typestore, c)
+                                                    ensure_connection_type_registered(ros1_typestore, c)
                                                     conn_map[c.id] = add_connection_compat(
                                                         writer,
                                                         c,
-                                                        export_reader.typestore,
+                                                        ros1_typestore,
                                                         "bag",
                                                     )
                                                 except Exception as e:
@@ -840,8 +911,24 @@ if bag_paths:
                                             for conn, ts, raw in export_reader.messages():
                                                 if conn.id in skipped_conn_ids: continue
                                                 if final_start <= ts <= final_end:
-                                                    writer.write(conn_map[conn.id], ts, raw)
-                                                    written_count += 1
+                                                    try:
+                                                        ros1_raw = convert_cdr_message_to_ros1(
+                                                            raw,
+                                                            conn,
+                                                            export_reader.typestore,
+                                                            ros1_typestore,
+                                                        )
+                                                        writer.write(conn_map[conn.id], ts, ros1_raw)
+                                                        written_count += 1
+                                                    except Exception as e:
+                                                        skipped_conn_ids.add(conn.id)
+                                                        if conn.topic not in skipped_message_topics:
+                                                            skipped_message_topics.add(conn.topic)
+                                                            st.warning(
+                                                                f"⚠️ 跳过 Topic: `{conn.topic}` "
+                                                                f"(消息转换失败，类型: {conn.msgtype}，"
+                                                                f"异常: {type(e).__name__}: {e})"
+                                                            )
 
                                     verify_info = verify_exported_bag(out_path, typestore)
                                     if verify_info["message_count"] == 0:
@@ -878,6 +965,7 @@ if bag_paths:
                                         with AnyReader([final_bag_path], default_typestore=typestore) as export_reader:
                                             for c in export_reader.connections:
                                                 try:
+                                                    ensure_connection_type_registered(export_reader.typestore, c)
                                                     conn_map[c.id] = add_connection_compat(
                                                         writer,
                                                         c,
