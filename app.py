@@ -33,9 +33,10 @@ except ImportError:
 
 # 3. ROS2 MCAP (.mcap)
 try:
-    from rosbags.rosbag2 import Writer as McapWriter
+    from rosbags.rosbag2 import Writer as McapWriter, StoragePlugin
 except ImportError:
     McapWriter = None
+    StoragePlugin = None
 
 # ==========================================
 # 1. 辅助函数
@@ -957,9 +958,15 @@ if bag_paths:
                                         raise ImportError("McapWriter module not found")
 
                                     status.write("初始化 MCAP Writer...")
-                                    out_path = temp_dir_path / (export_name + ".mcap")
+                                    out_dir = temp_dir_path / export_name
+                                    if out_dir.exists():
+                                        shutil.rmtree(out_dir)
                                     
-                                    with McapWriter(out_path, version=9) as writer:
+                                    with McapWriter(
+                                        out_dir,
+                                        version=9,
+                                        storage_plugin=StoragePlugin.MCAP,
+                                    ) as writer:
                                         conn_map = {}
                                         written_count = 0
                                         with AnyReader([final_bag_path], default_typestore=typestore) as export_reader:
@@ -986,7 +993,8 @@ if bag_paths:
                                                     writer.write(conn_map[conn.id], ts, raw)
                                                     written_count += 1
 
-                                    verify_info = verify_exported_bag(out_path, typestore)
+                                    mcap_file_path = out_dir / f"{out_dir.name}.mcap"
+                                    verify_info = verify_exported_bag(mcap_file_path, typestore)
                                     if verify_info["message_count"] == 0:
                                         raise ValueError(
                                             "导出的 MCAP 包为空。"
@@ -999,7 +1007,7 @@ if bag_paths:
                                         f"{verify_info['topic_count']} 个 Topic。"
                                     )
                                     
-                                    output_file_path = out_path
+                                    output_file_path = mcap_file_path
                                     export_name += ".mcap"
                                 # --- 成功处理 ---
                                 if output_file_path and output_file_path.exists():
