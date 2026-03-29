@@ -72,37 +72,38 @@ streamlit run app.py
 如果你通过 SSH (如 VS Code) 连接到服务器运行此代码，可以直接在本地浏览器访问转发后的 localhost:8501。在侧边栏选择**“服务器本地文件”**模式，输入服务器的绝对路径即可瞬间加载大型 bag 文件，无需漫长的网络上传！
 
 ## 📖 使用指南 (Usage)
-加载数据：
-模式一：拖拽上传本地的 .bag / .mcap / .db3 + .yaml 文件。
-模式二：直接输入绝对路径（推荐远程开发使用）。
-数据概览：自动解析文件时长、消息总数，并列出按消息量排序的 Topic 表格。
-深度可视化：
-在下拉菜单中选择感兴趣的 Topic。
-拖动下方滑块查看单帧的原始 JSON 结构。
-对于图像、点云和曲线图，支持缩放、旋转等高自由度交互。
-裁剪与导出：
-滑动底部的双向滑块，选择你需要保留的“黄金时间段”。
-选择你期望导出的格式（自动处理 ROS1 / ROS2 之间的序列化转换）。
+加载数据：  
+模式一：拖拽上传本地的 .bag / .mcap / .db3 + .yaml 文件。  
+模式二：直接输入绝对路径（推荐远程开发使用）。  
+数据概览：自动解析文件时长、消息总数，并列出按消息量排序的 Topic 表格。  
+深度可视化：  
+在下拉菜单中选择感兴趣的 Topic。  
+拖动下方滑块查看单帧的原始 JSON 结构。  
+对于图像、点云和曲线图，支持缩放、旋转等高自由度交互。  
+裁剪与导出：  
+滑动底部的双向滑块，选择你需要保留的“黄金时间段”。  
+选择你期望导出的格式（自动处理 ROS1 / ROS2 之间的序列化转换）。  
 点击“开始导出”，完成后直接下载裁剪后的干净数据包。
 
 ## 🛠️ 技术栈 (Tech Stack)
 Frontend & Backend: Streamlit
 ROS Data Parsing: rosbags (Pure Python ROS bag reader/writer)
 Data Visualization: Plotly, Pandas
-🤝 贡献与反馈 (Contributing)
+
+## 🤝 贡献与反馈 (Contributing)
 欢迎提交 Issue 和 Pull Request！如果你在具身智能或机器人领域有更特殊的数据处理需求（比如加入针对特定机械臂的关节角度可视化支持），非常欢迎一起交流完善。
 Fork 本仓库
-创建特性分支 (git checkout -b feature/AmazingFeature)
-提交修改 (git commit -m 'Add some AmazingFeature')
-推送到分支 (git push origin feature/AmazingFeature)
+创建特性分支 (`git checkout -b feature/AmazingFeature`)
+提交修改 (`git commit -m 'Add some AmazingFeature'`)
+推送到分支 (`git push origin feature/AmazingFeature`)
 发起 Pull Request
 
 ## 📄 许可证 (License)
 Distributed under the MIT License. See LICENSE for more information.
 
 ## ✍️ 作者 (Author)
-[[你的名字 / 昵称]]
+[[Pheobe]]
 🤖 PhD Student researching Embodied AI & Dexterous Teleoperation
-📧 Email: [[你的邮箱]]
-🐙 GitHub: @[你的用户名]
+📧 Email: [[yinbh25@mails.tsinghua.edu.cn]]
+<!-- 🐙 GitHub: @[你的用户名] -->
 如果这个小工具帮到了你的科研工作，欢迎给一个 ⭐️ Star！ 这对我非常重要，谢谢！
