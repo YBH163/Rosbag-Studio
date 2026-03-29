@@ -54,7 +54,7 @@ pip install rosbags lz4 zstandard
 ### 3. 一键运行
 
 ```bash
-git clone https://github.com/[你的GitHub用户名]/Rosbag-Studio.git
+git clone https://github.com/YBH163/Rosbag-Studio.git
 cd Rosbag-Studio
 streamlit run app.py
 ```
@@ -103,7 +103,7 @@ streamlit run app.py
 4. 发起 Pull Request
 
 ## 📄 许可证 (License)
-Distributed under the MIT License. See LICENSE for more information.
+Distributed under the GNU General Public License v3.0 License. See LICENSE for more information.
 
 ## ✍️ 作者 (Author)
 ### Phoebe  
