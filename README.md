@@ -53,20 +53,22 @@ conda activate rosbag_studio
 
 本项目基于强大的数据科学 Web 框架 [Streamlit](https://streamlit.io/) 和解析库[rosbags](https://pypi.org/project/rosbags/)。
 
-```bash
+
 pip install streamlit pandas numpy plotly Pillow
 pip install rosbags lz4 zstandard
 
-3. 一键运行
-code
-Bash
+### 3. 一键运行
+
+```bash
 git clone https://github.com/[你的GitHub用户名]/Rosbag-Studio.git
 cd Rosbag-Studio
 streamlit run app.py
+
 运行后，浏览器将自动打开 http://localhost:8501。
 💡 远程服务器使用提示：
 如果你通过 SSH (如 VS Code) 连接到服务器运行此代码，可以直接在本地浏览器访问转发后的 localhost:8501。在侧边栏选择**“服务器本地文件”**模式，输入服务器的绝对路径即可瞬间加载大型 bag 文件，无需漫长的网络上传！
-📖 使用指南 (Usage)
+
+## 📖 使用指南 (Usage)
 加载数据：
 模式一：拖拽上传本地的 .bag / .mcap / .db3 + .yaml 文件。
 模式二：直接输入绝对路径（推荐远程开发使用）。
@@ -79,7 +81,8 @@ streamlit run app.py
 滑动底部的双向滑块，选择你需要保留的“黄金时间段”。
 选择你期望导出的格式（自动处理 ROS1 / ROS2 之间的序列化转换）。
 点击“开始导出”，完成后直接下载裁剪后的干净数据包。
-🛠️ 技术栈 (Tech Stack)
+
+## 🛠️ 技术栈 (Tech Stack)
 Frontend & Backend: Streamlit
 ROS Data Parsing: rosbags (Pure Python ROS bag reader/writer)
 Data Visualization: Plotly, Pandas
@@ -90,9 +93,11 @@ Fork 本仓库
 提交修改 (git commit -m 'Add some AmazingFeature')
 推送到分支 (git push origin feature/AmazingFeature)
 发起 Pull Request
-📄 许可证 (License)
+
+## 📄 许可证 (License)
 Distributed under the MIT License. See LICENSE for more information.
-✍️ 作者 (Author)
+
+## ✍️ 作者 (Author)
 [[你的名字 / 昵称]]
 🤖 PhD Student researching Embodied AI & Dexterous Teleoperation
 📧 Email: [[你的邮箱]]
