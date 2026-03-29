@@ -48,14 +48,16 @@
 ```bash
 conda create -n rosbag_studio python=3.10 -y
 conda activate rosbag_studio
+```
 
 ### 2. 安装依赖
 
 本项目基于强大的数据科学 Web 框架 [Streamlit](https://streamlit.io/) 和解析库[rosbags](https://pypi.org/project/rosbags/)。
 
-
+```bash
 pip install streamlit pandas numpy plotly Pillow
 pip install rosbags lz4 zstandard
+```
 
 ### 3. 一键运行
 
@@ -63,6 +65,7 @@ pip install rosbags lz4 zstandard
 git clone https://github.com/[你的GitHub用户名]/Rosbag-Studio.git
 cd Rosbag-Studio
 streamlit run app.py
+```
 
 运行后，浏览器将自动打开 http://localhost:8501。
 💡 远程服务器使用提示：
