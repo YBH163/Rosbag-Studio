@@ -284,32 +284,6 @@ def convert_cdr_message_to_ros1(raw, connection, source_typestore, ros1_typestor
 st.set_page_config(page_title="ROS Bag 工具箱 Pro", layout="wide", page_icon="🛠️")
 st.title("🛠️ ROS Bag 交互式处理工具 (Pro)")
 
-
-# # --- 侧边栏 ---
-# with st.sidebar:
-#     st.header("📂 文件上传")
-#     uploaded_files = st.file_uploader("支持 .bag, .mcap, .db3+.yaml", accept_multiple_files=True)
-
-# if uploaded_files:
-#     temp_dir = tempfile.mkdtemp()
-#     temp_dir_path = Path(temp_dir)
-    
-#     try:
-#         # 保存文件
-#         for f in uploaded_files:
-#             with open(temp_dir_path / f.name, "wb") as w: w.write(f.getvalue())
-        
-#         # 识别路径
-#         files = [f.name for f in temp_dir_path.iterdir()]
-#         bag_path = None
-#         if any(f.endswith(".bag") for f in files): bag_path = temp_dir_path / next(f for f in files if f.endswith(".bag"))
-#         elif any(f.endswith(".mcap") for f in files): bag_path = temp_dir_path / next(f for f in files if f.endswith(".mcap"))
-#         elif "metadata.yaml" in files: bag_path = temp_dir_path
-        
-#         if not bag_path:
-#             st.error("❌ 无法识别 Bag 文件结构")
-#             st.stop()
-
 with st.sidebar:
     st.header("📂 数据源设置")
     
@@ -511,7 +485,7 @@ if bag_paths:
                         with col_sel2:
                             st.info(f"📌 类型: **{msg_type}**\n\n📦 数量: **{total_msgs}** 帧")
 
-                        limit = 2000
+                        limit = 5000
                         
                         # --- A: 图像 ---
                         if "Image" in msg_type:

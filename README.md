@@ -13,13 +13,6 @@
 </p>
 
 ---
-
-## 🎬 Demo / 效果展示
-
-*(💡 建议：在这里放一张高质量的 GIF 动图，展示工具的核心工作流：选择文件 -> 查看 3D 点云/图像 -> 拖动滑块裁剪 -> 点击下载)*
-
-![Demo GIF Placeholder](./docs/demo.gif)
-
 ## ✨ 核心痛点与特性 (Why Rosbag Studio?)
 
 在平时的具身智能遥操作与机器人调试中，我们经常遇到以下痛点：
@@ -38,7 +31,6 @@
   - 📍 **位姿 (PoseArray)**：一键 3D 可视化多关键点位姿（非常适合灵巧手/机械臂遥操作抓取任务）。
   - 📈 **数值趋势 (Time-series)**：自动展平各类消息，绘制交互式数据曲线。
 - ✂️ **精准的交互式裁剪 (Interactive Cropping)**：提供“按时间戳”和“按特定 Topic 帧数”两种裁剪模式，彻底告别盲猜时间戳。
-- ☁️ **远程开发友好 (Remote Friendly)**：部署在 Ubuntu 服务器上，直接读取服务器本地硬盘路径，在 Windows 浏览器上无缝操作，实现“秒开” GB 级数据包。
 
 ## 🚀 快速开始 (Quick Start)
 
@@ -67,20 +59,19 @@ cd Rosbag-Studio
 streamlit run app.py
 ```
 
-运行后，浏览器将自动打开 http://localhost:8501。
-💡 远程服务器使用提示：
-如果你通过 SSH (如 VS Code) 连接到服务器运行此代码，可以直接在本地浏览器访问转发后的 localhost:8501。在侧边栏选择**“服务器本地文件”**模式，输入服务器的绝对路径即可瞬间加载大型 bag 文件，无需漫长的网络上传！
+运行后，浏览器将自动打开 <http://localhost:8501>。
 
 ## 📖 使用指南 (Usage)
-加载数据：  
+### 加载数据：  
 模式一：拖拽上传本地的 .bag / .mcap / .db3 + .yaml 文件。  
 模式二：直接输入绝对路径（推荐远程开发使用）。  
-数据概览：自动解析文件时长、消息总数，并列出按消息量排序的 Topic 表格。  
-深度可视化：  
+### 数据概览：
+自动解析文件时长、消息总数，并列出按消息量排序的 Topic 表格。  
+### 深度可视化：  
 在下拉菜单中选择感兴趣的 Topic。  
 拖动下方滑块查看单帧的原始 JSON 结构。  
 对于图像、点云和曲线图，支持缩放、旋转等高自由度交互。  
-裁剪与导出：  
+### 裁剪与导出：  
 滑动底部的双向滑块，选择你需要保留的“黄金时间段”。  
 选择你期望导出的格式（自动处理 ROS1 / ROS2 之间的序列化转换）。  
 点击“开始导出”，完成后直接下载裁剪后的干净数据包。
@@ -91,19 +82,18 @@ ROS Data Parsing: rosbags (Pure Python ROS bag reader/writer)
 Data Visualization: Plotly, Pandas
 
 ## 🤝 贡献与反馈 (Contributing)
-欢迎提交 Issue 和 Pull Request！如果你在具身智能或机器人领域有更特殊的数据处理需求（比如加入针对特定机械臂的关节角度可视化支持），非常欢迎一起交流完善。
-Fork 本仓库
-创建特性分支 (`git checkout -b feature/AmazingFeature`)
-提交修改 (`git commit -m 'Add some AmazingFeature'`)
-推送到分支 (`git push origin feature/AmazingFeature`)
-发起 Pull Request
+欢迎提交 Issue 和 Pull Request！如果你在具身智能或机器人领域有更特殊的数据处理需求（比如加入针对特定机械臂的关节角度可视化支持），非常欢迎一起交流完善!  
+Fork 本仓库：  
+1. 创建特性分支 (`git checkout -b feature/AmazingFeature`)  
+2. 提交修改 (`git commit -m 'Add some AmazingFeature'`)  
+3. 推送到分支 (`git push origin feature/AmazingFeature`)  
+4. 发起 Pull Request
 
 ## 📄 许可证 (License)
 Distributed under the MIT License. See LICENSE for more information.
 
 ## ✍️ 作者 (Author)
-[[Pheobe]]
-🤖 PhD Student researching Embodied AI & Dexterous Teleoperation
+### Phoebe  
+🤖 PhD Student researching Embodied AI & Dexterous Teleoperation  
 📧 Email: [[yinbh25@mails.tsinghua.edu.cn]]
-<!-- 🐙 GitHub: @[你的用户名] -->
-如果这个小工具帮到了你的科研工作，欢迎给一个 ⭐️ Star！ 这对我非常重要，谢谢！
+如果这个小工具对你有所帮助，欢迎给一个 ⭐️ Star！ 这对我非常重要，谢谢！
