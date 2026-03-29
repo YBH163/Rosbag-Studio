@@ -75,6 +75,7 @@ streamlit run app.py
 ![可视化工作台](./docs/visualization.png)
 对于图像、点云和曲线图，支持缩放、旋转等高自由度交互。  
 ### 裁剪与导出：  
+#### 裁剪：
 - 模式一：按时间范围裁剪  
 选择“按时间范围裁剪”选项。滑动底部的双向滑块，选择你需要保留的“黄金时间段”：  
 ![按时间范围裁剪](./docs/cut_time.png)   
@@ -82,18 +83,19 @@ streamlit run app.py
 - 模式二：按Topic帧范围裁剪
 选择“按Topic帧范围裁剪”选项。先选择一个参考的Topic，然后滑动底部的双向滑块，选择你需要保留的该Topic的帧数范围。并点击“计算对应时间戳”，勾选“确认使用帧范围”。  
 ![按Topic帧范围裁剪](./docs/cut_topic.png)
-
+#### 导出：
 最后，选择你期望导出的格式，点击“开始导出”，等待处理完成后直接下载裁剪后的干净数据包。
 ![导出下载](./docs/output.png)
 
 
 ## 🛠️ 技术栈 (Tech Stack)
-- Frontend & Backend: Streamlit  
-- ROS Data Parsing: rosbags (Pure Python ROS bag reader/writer)  
-- Data Visualization: Plotly, Pandas
+- 前后端（Frontend & Backend）: Streamlit  
+- ROS数据解析与处理（ROS Data Parsing）: rosbags (Pure Python ROS bag reader/writer)  
+- 数据可视化（Data Visualization）: Plotly, Pandas
 
 ## 🤝 贡献与反馈 (Contributing)
-欢迎提交 Issue 和 Pull Request！如果你在具身智能或机器人领域有更特殊的数据处理需求（比如加入针对特定机械臂的关节角度可视化支持），非常欢迎一起交流完善!  
+欢迎提交 Issue 和 Pull Request！如果你在具身智能或机器人领域有更特殊的数据处理需求（比如加入针对特定机械臂的关节角度可视化支持），非常欢迎一起交流完善!
+
 欢迎Fork 本仓库：
 1. 创建特性分支 (`git checkout -b feature/AmazingFeature`)  
 2. 提交修改 (`git commit -m 'Add some AmazingFeature'`)  
