@@ -81,20 +81,20 @@ streamlit run app.py
 注意：选择完成之后一定要勾选“确认使用时间范围”。 
 - 模式二：按Topic帧范围裁剪
 选择“按Topic帧范围裁剪”选项。先选择一个参考的Topic，然后滑动底部的双向滑块，选择你需要保留的该Topic的帧数范围。并点击“计算对应时间戳”，勾选“确认使用帧范围”。  
-![按Topic帧范围裁剪](cut_topic.png)
+![按Topic帧范围裁剪](./docs/cut_topic.png)
 
 最后，选择你期望导出的格式，点击“开始导出”，等待处理完成后直接下载裁剪后的干净数据包。
-![导出下载](output.png)
+![导出下载](./docs/output.png)
 
 
 ## 🛠️ 技术栈 (Tech Stack)
-Frontend & Backend: Streamlit
-ROS Data Parsing: rosbags (Pure Python ROS bag reader/writer)
-Data Visualization: Plotly, Pandas
+- Frontend & Backend: Streamlit  
+- ROS Data Parsing: rosbags (Pure Python ROS bag reader/writer)  
+- Data Visualization: Plotly, Pandas
 
 ## 🤝 贡献与反馈 (Contributing)
 欢迎提交 Issue 和 Pull Request！如果你在具身智能或机器人领域有更特殊的数据处理需求（比如加入针对特定机械臂的关节角度可视化支持），非常欢迎一起交流完善!  
-Fork 本仓库：  
+欢迎Fork 本仓库：
 1. 创建特性分支 (`git checkout -b feature/AmazingFeature`)  
 2. 提交修改 (`git commit -m 'Add some AmazingFeature'`)  
 3. 推送到分支 (`git push origin feature/AmazingFeature`)  
@@ -106,5 +106,5 @@ Distributed under the MIT License. See LICENSE for more information.
 ## ✍️ 作者 (Author)
 ### Phoebe  
 🤖 PhD Student researching Embodied AI & Dexterous Teleoperation  
-📧 Email: [[yinbh25@mails.tsinghua.edu.cn]]
+📧 Email: [yinbh25@mails.tsinghua.edu.cn]
 如果这个小工具对你有所帮助，欢迎给一个 ⭐️ Star！ 这对我非常重要，谢谢！
