@@ -533,7 +533,7 @@ if uploaded_files:
                 # --- Day 3: 裁剪与导出 ---
                 st.divider()
                 st.header("✂️ 3. 裁剪与导出")
-                st.caption("将裁剪后的数据导出为标准的 ROS2 MCAP 格式。")
+                st.caption("将原始数据的指定小节进行裁剪与导出，支持 ROS1 和 ROS2 格式。")
 
                 crop_tab1, crop_tab2 = st.tabs(["⏱️ 按时间范围裁剪", "🎞️ 按 Topic 帧范围裁剪"])
                 
